@@ -1,7 +1,6 @@
 ﻿import os
 import re
 import sys
-import json
 import requests
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -17,6 +16,35 @@ if os.path.exists(".env"):
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY_FREE")
 
+def obtener_modelos_activos(headers: dict) -> list:
+    prioritarios = ["gemini-3.5-flash", "gemma-3-27b-it"]
+    try:
+        r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", headers=headers, timeout=10)
+        if r.status_code == 200:
+            candidatos = []
+            ignorar = ("2.0", "2.5", "1.5", "embedding", "aqa", "imagen", "veo", "tts", "audio", "robotics", "computer-use", "deep-research")
+            for m in r.json().get("models", []):
+                nombre = m.get("name", "").replace("models/", "")
+                metodos = m.get("supportedGenerationMethods", [])
+                if "generateContent" not in metodos or any(bad in nombre.lower() for bad in ignorar):
+                    continue
+                if ("gemini" in nombre.lower() or "gemma" in nombre.lower()) and "image" not in nombre.lower():
+                    candidatos.append(nombre)
+            candidatos.sort(reverse=True)
+            ordenados = [m for m in prioritarios if m in candidatos]
+            for m in candidatos:
+                if m not in ordenados:
+                    ordenados.append(m)
+            if ordenados:
+                return ordenados
+    except Exception:
+        pass
+    return prioritarios
+
+def extraer_etiqueta(texto: str, tag: str) -> str:
+    match = re.search(rf"<{tag}>(.*?)</{tag}>", texto, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
 def consultar_copiloto(descripcion_oferta: str) -> dict | None:
     if not GEMINI_KEY:
         print("[!] Falta GEMINI_API_KEY_FREE en el archivo .env")
@@ -26,38 +54,51 @@ def consultar_copiloto(descripcion_oferta: str) -> dict | None:
         "Content-Type": "application/json",
         "x-goog-api-key": GEMINI_KEY
     }
-    modelos = ["gemini-3.5-flash", "gemma-3-27b-it"]
+    modelos = obtener_modelos_activos(headers)
     prompt = (
         "Eres un desarrollador senior de Python y automatización ayudando a cerrar un cliente freelance.\n"
-        "Analiza esta oferta del cliente y responde ÚNICAMENTE con un objeto JSON válido con estas 4 claves:\n"
-        "1. 'diagnostico_es': Qué pide exactamente el cliente, qué tecnología usar y qué detalle técnico mencionar para impresionarlo (2 líneas en español).\n"
-        "2. 'precio_sugerido': Rango justo en USD y tiempo estimado de entrega.\n"
-        "3. 'pitch_en': Mensaje de respuesta en inglés natural (45-65 palabras), directo al grano, demostrando diagnóstico técnico inmediato, sin saludos robóticos ni clichés de IA.\n"
-        "4. 'codigo_python': Script completo en Python 3.12 (usando requests, bs4, csv o json según corresponda) listo como base funcional para resolver el pedido, con comentarios claros y manejo de errores.\n\n"
+        "Analiza esta oferta y responde ÚNICAMENTE usando exactamente estas 4 etiquetas XML (sin texto fuera de ellas):\n\n"
+        "<DIAGNOSTICO>\n"
+        "Qué pide exactamente el cliente, qué stack usar y qué detalle técnico mencionar para demostrar dominio (2 líneas en español).\n"
+        "</DIAGNOSTICO>\n\n"
+        "<PRECIO>\n"
+        "Rango justo en USD y tiempo estimado de entrega.\n"
+        "</PRECIO>\n\n"
+        "<PITCH>\n"
+        "Mensaje corto de respuesta en inglés natural (45-65 palabras), directo al grano, demostrando diagnóstico técnico inmediato, sin saludos robóticos ni clichés de IA.\n"
+        "</PITCH>\n\n"
+        "<CODIGO>\n"
+        "Script completo y funcional en Python 3.12 (usando requests, bs4, csv o json según corresponda) listo como base para resolver el pedido, con comentarios claros y manejo de errores.\n"
+        "</CODIGO>\n\n"
         f"OFERTA DEL CLIENTE:\n{descripcion_oferta}"
     )
 
     for modelo in modelos:
-        print(f"[*] Generando propuesta y código base con {modelo}...")
-        usa_json_nativo = "gemma" not in modelo.lower()
-        gen_config = {"temperature": 0.3}
-        if usa_json_nativo:
-            gen_config["responseMimeType"] = "application/json"
-
+        print(f"[*] Probando con {modelo}...", flush=True)
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": gen_config
+            "generationConfig": {"temperature": 0.3}
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=25)
             if r.status_code == 200:
                 texto = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                match = re.search(r"\{.*\}", texto, re.DOTALL)
-                if match:
-                    return json.loads(match.group(0))
+                pitch = extraer_etiqueta(texto, "PITCH")
+                codigo = extraer_etiqueta(texto, "CODIGO")
+                if pitch or codigo:
+                    codigo = re.sub(r"^```(?:python)?\s*|\s*```$", "", codigo)
+                    print(f"[+] ¡Generado con {modelo}!", flush=True)
+                    return {
+                        "diagnostico_es": extraer_etiqueta(texto, "DIAGNOSTICO"),
+                        "precio_sugerido": extraer_etiqueta(texto, "PRECIO"),
+                        "pitch_en": pitch,
+                        "codigo_python": codigo
+                    }
+            else:
+                print(f"    [~] {modelo} respondió HTTP {r.status_code}, saltando...", flush=True)
         except Exception as e:
-            print(f"[!] {modelo} falló ({e}), probando respaldo...")
+            print(f"    [~] {modelo} lento/error, saltando...", flush=True)
 
     return None
 
@@ -83,7 +124,7 @@ def main():
 
     res = consultar_copiloto(oferta)
     if not res:
-        print("[!] No se pudo generar respuesta en este momento.")
+        print("[!] Ningún modelo pudo responder en este momento. Intenta de nuevo en unos segundos.")
         return
 
     print("\n" + "=" * 60)
@@ -103,4 +144,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
