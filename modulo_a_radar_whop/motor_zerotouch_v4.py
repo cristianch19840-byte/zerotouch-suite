@@ -9,7 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 
 if os.path.exists(".env"):
-    with open(".env", encoding="utf-8") as f:
+    with open(".env", encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -281,3 +281,4 @@ if __name__ == "__main__":
         )
     else:
         ejecutar_ciclo()
+
