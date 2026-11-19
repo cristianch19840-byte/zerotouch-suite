@@ -17,7 +17,7 @@ if os.path.exists(".env"):
 GEMINI_KEY = os.getenv("GEMINI_API_KEY_FREE")
 
 def obtener_modelos_activos(headers: dict) -> list:
-    prioritarios = ["gemini-3.5-flash", "gemma-3-27b-it"]
+    prioritarios = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemma-3-27b-it"]
     try:
         r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", headers=headers, timeout=10)
         if r.status_code == 200:
@@ -144,3 +144,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
