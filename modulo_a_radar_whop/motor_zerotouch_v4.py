@@ -8,7 +8,6 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 
-# Carga automática de .env en ejecución local (en GitHub usa los Secrets)
 if os.path.exists(".env"):
     with open(".env", encoding="utf-8") as f:
         for line in f:
@@ -22,7 +21,7 @@ TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 WEB_HEADERS = {
-    "User-Agent": "ZeroTouchRadar/5.0 (+https://github.com)",
+    "User-Agent": "ZeroTouchRadar/5.1 (+https://github.com)",
     "Accept": "application/json,application/xml,text/xml;q=0.9,*/*;q=0.8"
 }
 
@@ -109,10 +108,10 @@ def consultar_ia_rest(prompt: str):
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
         try:
-            r = requests.post(url, headers=headers, json=payload, timeout=10)
+            r = requests.post(url, headers=headers, json=payload, timeout=12)
             if r.status_code == 400 and "responseMimeType" in payload["generationConfig"]:
                 payload["generationConfig"].pop("responseMimeType", None)
-                r = requests.post(url, headers=headers, json=payload, timeout=10)
+                r = requests.post(url, headers=headers, json=payload, timeout=12)
 
             if r.status_code == 200:
                 data = r.json()
@@ -135,11 +134,13 @@ def evaluar_y_enviar(fuente: str, titulo: str, texto_limpio: str, link: str) -> 
         else "Sé directo y profesional confirmando disponibilidad y entrega rápida."
     )
     prompt = (
-        f"Evalúa esta oportunidad laboral de {fuente} y responde ÚNICAMENTE con un objeto JSON válido (sin markdown ni texto extra).\n"
+        f"Evalúa esta oportunidad laboral de {fuente} y responde ÚNICAMENTE con un objeto JSON válido.\n"
         f"Título: {titulo}\n"
         f"Contenido: {texto_limpio}\n"
         f"Contexto: {regla}\n"
-        f"Rechaza ofertas de servicios ([For Hire]), tareas académicas o puestos presenciales.\n"
+        f"REGLAS ESTRICTAS DE FILTRADO:\n"
+        f"- relevante=true SOLO si es un proyecto freelance puntual o tarea corta (web scraping, script Python, bot de Telegram/Discord, automatización, extracción/limpieza de datos, API o arreglo web).\n"
+        f"- RECHAZA (relevante=false, score<=4) vacantes corporativas full-time/part-time con contrato fijo, puestos Senior/Lead/Manager, trabajos sin pago (equity/rev-share), ofertas [For Hire] o tareas universitarias.\n"
         f"Estructura exacta requerida:\n"
         f'{{"relevante": true, "score": 8, "categoria": "Python", "presupuesto": "$150 USD", "resumen_es": "...", "pitch_en": "..."}}'
     )
@@ -181,7 +182,7 @@ def recolectar_ofertas() -> list:
             r = requests.get(api_url, headers=WEB_HEADERS, timeout=15)
             if r.status_code == 200 and r.json().get("status") == "ok":
                 cont = 0
-                for item in r.json().get("items", [])[:10]:
+                for item in r.json().get("items", [])[:12]:
                     titulo = item.get("title", "")
                     if REGEX_DESCARTAR.search(titulo):
                         continue
@@ -249,7 +250,7 @@ def recolectar_ofertas() -> list:
     return ofertas
 
 def ejecutar_ciclo() -> None:
-    print("🚀 Iniciando ciclo Radar Zero-Touch v5.0...", flush=True)
+    print("🚀 Iniciando ciclo Radar Zero-Touch v5.1 (Filtro Freelance)...", flush=True)
     conn = sqlite3.connect("estado_radar_v4.db")
     try:
         conn.execute("CREATE TABLE IF NOT EXISTS vistos (post_id TEXT PRIMARY KEY, ts DATETIME DEFAULT CURRENT_TIMESTAMP)")
