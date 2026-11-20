@@ -51,6 +51,22 @@ from modulo_d_marketing.iman_clientes import (
     generar_cierre_y_review_ia,
 )
 
+WEB_UI_DIR = os.path.join(ROOT_DIR, "web_ui")
+MIME_MAP = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+}
+
+def ui_v14_lista() -> bool:
+    return (
+        os.path.isfile(os.path.join(WEB_UI_DIR, "index.html"))
+        and os.path.isfile(os.path.join(WEB_UI_DIR, "app.js"))
+    )
+
 SCAN_LOCK = threading.Lock()
 SNIPER_LOCK = threading.Lock()
 SCAN_STATE = {"running": False, "last_result": None, "sniper_on": False, "sniper_ciclos": 0}
@@ -1211,7 +1227,33 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         try:
             if ruta == "/":
-                self._send(200, "text/html; charset=utf-8", HTML_DASHBOARD.encode("utf-8"))
+                if ui_v14_lista():
+                    with open(os.path.join(WEB_UI_DIR, "index.html"), "rb") as f_idx:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header("Cache-Control", "no-store")
+                        data_idx = f_idx.read()
+                        self.send_header("Content-Length", str(len(data_idx)))
+                        self.end_headers()
+                        self.wfile.write(data_idx)
+                else:
+                    self._send(200, "text/html; charset=utf-8", HTML_DASHBOARD.encode("utf-8"))
+            elif ruta.startswith("/ui/"):
+                rel_name = os.path.basename(ruta[4:])
+                full_p = os.path.abspath(os.path.join(WEB_UI_DIR, rel_name))
+                if full_p.startswith(os.path.abspath(WEB_UI_DIR)) and os.path.isfile(full_p):
+                    ext = os.path.splitext(rel_name)[1].lower()
+                    ctype = MIME_MAP.get(ext, "application/octet-stream")
+                    with open(full_p, "rb") as f_st:
+                        raw_st = f_st.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(raw_st)))
+                    self.end_headers()
+                    self.wfile.write(raw_st)
+                else:
+                    self._send(404, "text/plain", b"Asset Not Found")
             elif ruta == "/api/config":
                 self._send_json(cargar_config())
             elif ruta == "/api/scripts":
