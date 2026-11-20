@@ -8,24 +8,32 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from core_ia import C, SESSION, safe_float, safe_int, cargar_config, preparar_db
-from modulo_a_radar_whop.motor_zerotouch_v4 import ejecutar_ciclo, enviar_resumen_telegram, publicar_telegram
+from modulo_a_radar_whop.motor_zerotouch_v4 import (
+    ejecutar_ciclo,
+    enviar_resumen_telegram,
+    publicar_telegram,
+    revisar_recordatorios_followup,
+)
 from modulo_b_ejecutor.copiloto import descargar_post_reddit, cargar_desde_crm, analizar_oferta_completo
+from modulo_c_whop.empaquetador import empaquetar_producto_whop
 from modulo_d_marketing.iman_clientes import responder_objecion_ia
 
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = str(os.getenv("TELEGRAM_CHAT_ID") or "")
 
 AYUDA_HTML = (
-    "<b>🤖 ZEROTOUCH TITAN v11.5 — CONTROL REMOTO</b>\n\n"
-    "<code>/scan</code> — Lanza barrido inmediato de 16 fuentes\n"
-    "<code>/stats</code> — KPIs en vivo, USD ganados y tokens ahorrados\n"
-    "<code>/top</code> — Muestra tus 5 mejores leads nuevos\n"
-    "<code>/pitch &lt;link Reddit o #ID&gt;</code> — Genera Pitch A/B + Precios\n"
+    "<b>🤖 ZEROTOUCH APEX v12.0 — CONTROL REMOTO</b>\n\n"
+    "<code>/scan</code> — Barrido inmediato de 16 fuentes\n"
+    "<code>/stats</code> — KPIs, USD ganados y tokens ahorrados\n"
+    "<code>/pipeline</code> — Plata viva en negociacion + top activos\n"
+    "<code>/top</code> — Tus 5 mejores leads nuevos\n"
+    "<code>/pitch &lt;link Reddit o #ID&gt;</code> — Pitch A/B + Red Flags + Precios\n"
     "<code>/negociar &lt;mensaje cliente&gt;</code> — Respuestas anti-objecion\n"
+    "<code>/whop &lt;nombre producto&gt;</code> — Empaqueta tu ultimo script a .ZIP\n"
+    "<code>/followups</code> — Revisa y dispara recordatorios pendientes\n"
     "<code>/estado &lt;ID&gt; &lt;contactado|negociando|descartado&gt;</code>\n"
     "<code>/ganado &lt;ID&gt; &lt;USD&gt;</code> — Marca lead ganado y suma plata\n"
-    "<code>/borrar &lt;ID&gt;</code> — Elimina un lead del CRM\n"
-    "<code>/help</code> — Muestra este menu"
+    "<code>/borrar &lt;ID&gt;</code> — Elimina un lead del CRM"
 )
 
 def responder(chat_id: str, texto_html: str) -> None:
@@ -42,7 +50,7 @@ def procesar_comando(chat_id: str, texto: str) -> None:
             responder(chat_id, AYUDA_HTML)
 
         elif cmd == "/scan":
-            responder(chat_id, "⏳ <b>Escaneando 16 fuentes en modo TITAN...</b>")
+            responder(chat_id, "⏳ <b>Escaneando 16 fuentes en modo APEX...</b>")
             res = ejecutar_ciclo(modo_sonido=True)
             responder(
                 chat_id,
@@ -55,11 +63,45 @@ def procesar_comando(chat_id: str, texto: str) -> None:
         elif cmd == "/stats":
             enviar_resumen_telegram(chat_id=chat_id)
 
+        elif cmd == "/pipeline":
+            conn = preparar_db()
+            try:
+                rows = conn.execute(
+                    "SELECT id, estado, presupuesto, presupuesto_num, titulo FROM leads WHERE estado IN ('contactado', 'negociando') ORDER BY presupuesto_num DESC, id DESC LIMIT 8"
+                ).fetchall()
+                total_pipe = conn.execute("SELECT COALESCE(SUM(presupuesto_num), 0) FROM leads WHERE estado IN ('contactado', 'negociando')").fetchone()[0]
+            finally:
+                conn.close()
+            if not rows:
+                responder(chat_id, "💼 Pipeline vacio. Marca leads como <code>contactado</code> o <code>negociando</code>.")
+                return
+            lineas = [f"<b>💼 PIPELINE VIVO (~${total_pipe:.0f} USD)</b>\n"]
+            for lid, est, pres, _, tit in rows:
+                lineas.append(f"<b>#{lid}</b> [{est.upper()} | {html.escape(pres)}] {html.escape(tit[:60])}")
+            responder(chat_id, "\n".join(lineas))
+
+        elif cmd == "/followups":
+            conn = preparar_db()
+            try:
+                env = revisar_recordatorios_followup(conn, cargar_config())
+            finally:
+                conn.close()
+            responder(chat_id, f"⏰ Revisados: <b>{env}</b> recordatorio(s) enviado(s).")
+
+        elif cmd == "/whop":
+            nombre = arg or "ZeroTouch Automation Tool"
+            responder(chat_id, f"📦 <b>Empaquetando '{html.escape(nombre)}' en tu PC...</b>")
+            res = empaquetar_producto_whop("", nombre)
+            if res.get("error"):
+                responder(chat_id, f"❌ {html.escape(res['error'])}")
+            else:
+                responder(chat_id, f"✅ <b>ZIP Whop generado en tu PC!</b>\n📁 <code>{html.escape(res['zip_path'])}</code>")
+
         elif cmd == "/top":
             conn = preparar_db()
             try:
                 rows = conn.execute(
-                    "SELECT id, fuente, score, presupuesto, titulo, link FROM leads WHERE estado = 'nuevo' ORDER BY score DESC, id DESC LIMIT 5"
+                    "SELECT id, fuente, score, presupuesto, titulo, link FROM leads WHERE estado = 'nuevo' ORDER BY score DESC, presupuesto_num DESC, id DESC LIMIT 5"
                 ).fetchall()
             finally:
                 conn.close()
@@ -76,7 +118,7 @@ def procesar_comando(chat_id: str, texto: str) -> None:
             if not arg:
                 responder(chat_id, "⚠️ Uso: <code>/pitch https://reddit.com/...</code> o <code>/pitch #3</code>")
                 return
-            responder(chat_id, "🧠 <b>Generando Pitch A/B, precios y estrategia...</b>")
+            responder(chat_id, "🧠 <b>Generando Pitch A/B, Red Flags y precios...</b>")
             autor = titulo = ""
             if arg.startswith("#") and arg[1:].isdigit():
                 oferta, autor, titulo = cargar_desde_crm(int(arg[1:]))
@@ -91,11 +133,13 @@ def procesar_comando(chat_id: str, texto: str) -> None:
             if not res:
                 responder(chat_id, "❌ Gemini no respondio en este intento.")
                 return
+            # Recorte seguro por campo para nunca romper etiquetas <code>
             msg = (
-                f"<b>🎯 DIAGNOSTICO:</b>\n{html.escape(res['diagnostico'])}\n\n"
-                f"<b>💵 PRECIOS:</b>\n{html.escape(res['precios'])}\n\n"
-                f"<b>📩 PITCH A (toca para copiar):</b>\n<code>{html.escape(res['pitch_a'])}</code>\n\n"
-                f"<b>💬 PITCH B (alternativa):</b>\n<code>{html.escape(res['pitch_b'])}</code>\n\n"
+                f"<b>🚩 ALERTAS:</b> {html.escape((res.get('red_flags') or 'OK')[:220])}\n"
+                f"<b>🎯 DIAGNOSTICO:</b>\n{html.escape(res['diagnostico'][:450])}\n\n"
+                f"<b>💵 PRECIOS:</b>\n{html.escape(res['precios'][:350])}\n\n"
+                f"<b>📩 PITCH A (toca para copiar):</b>\n<code>{html.escape(res['pitch_a'][:950])}</code>\n\n"
+                f"<b>💬 PITCH B (alternativa):</b>\n<code>{html.escape(res['pitch_b'][:950])}</code>\n\n"
                 f"✅ <i>Script base guardado en tu PC (borrador_cliente.py).</i>"
             )
             responder(chat_id, msg)
@@ -110,9 +154,10 @@ def procesar_comando(chat_id: str, texto: str) -> None:
                 responder(chat_id, "❌ No se pudo generar respuesta ahora.")
                 return
             msg = (
-                f"<b>🧠 LECTURA:</b> {html.escape(res['consejo'])}\n\n"
-                f"<b>🛡️ OPCION FIRME (toca para copiar):</b>\n<code>{html.escape(res['firme'])}</code>\n\n"
-                f"<b>🤝 OPCION FLEXIBLE:</b>\n<code>{html.escape(res['flexible'])}</code>"
+                f"<b>🚩 RIESGO:</b> {html.escape((res.get('red_flag') or '')[:200])}\n"
+                f"<b>🧠 LECTURA:</b> {html.escape(res['consejo'][:400])}\n\n"
+                f"<b>🛡️ OPCION FIRME (toca para copiar):</b>\n<code>{html.escape(res['firme'][:950])}</code>\n\n"
+                f"<b>🤝 OPCION FLEXIBLE:</b>\n<code>{html.escape(res['flexible'][:950])}</code>"
             )
             responder(chat_id, msg)
 
@@ -197,7 +242,7 @@ def main() -> None:
     url = f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates"
     offset = obtener_offset_inicial(url)
 
-    print(f"\n{C.BOLD}{C.GREEN}=== CONTROL REMOTO TELEGRAM 2-VIAS ACTIVO (v11.5 TITAN) ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.GREEN}=== CONTROL REMOTO TELEGRAM 2-VIAS ACTIVO (v12.0 APEX) ==={C.RESET}")
     print(f"{C.DIM}Chats autorizados: {autorizados or 'Solo canal .env'} | Cola vieja purgada.")
     print(f"Escribe /help en tu canal o chat privado con el bot. Ctrl+C para salir.{C.RESET}\n")
 
@@ -216,7 +261,7 @@ def main() -> None:
                         if not txt.startswith("/"):
                             continue
                         if cid not in autorizados:
-                            print(f"{C.YELLOW}[!] Mensaje ignorado de chat_id={cid}. Si eres tu en DM privado, agrega '{cid}' en Ajustes -> Telegram Admin ID.{C.RESET}", flush=True)
+                            print(f"{C.YELLOW}[!] Mensaje ignorado de chat_id={cid}. Agrega '{cid}' en Ajustes -> Telegram Admin ID.{C.RESET}", flush=True)
                             continue
                         procesar_comando(cid, txt)
                 else:

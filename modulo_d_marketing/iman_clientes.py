@@ -12,7 +12,8 @@ def responder_objecion_ia(contexto: str, mensaje_cliente: str) -> dict | None:
         "Eres un cerrador experto de ventas freelance tecnicas en ingles.\n"
         f"Contexto del proyecto: {contexto or 'Proyecto freelance de Python/Automatizacion'}\n"
         f"Mensaje del cliente: {mensaje_cliente}\n"
-        "Responde UNICAMENTE con estas 3 etiquetas XML:\n"
+        "Responde UNICAMENTE con estas 4 etiquetas XML:\n"
+        "<RED_FLAG>Nivel de riesgo del cliente (Bajo / Medio / Alto + motivo en 1 linea en espanol).</RED_FLAG>\n"
         "<CONSEJO_ES>Lectura tactica rapida en 2 lineas (espanol).</CONSEJO_ES>\n"
         "<RESPUESTA_FIRME>Respuesta corta y segura en ingles (35-55 palabras) defendiendo tu precio con valor tecnico.</RESPUESTA_FIRME>\n"
         "<RESPUESTA_FLEXIBLE>Respuesta corta en ingles (35-55 palabras) ajustando alcance para encajar en su presupuesto sin regalarte.</RESPUESTA_FLEXIBLE>"
@@ -21,9 +22,46 @@ def responder_objecion_ia(contexto: str, mensaje_cliente: str) -> dict | None:
     if not res:
         return None
     return {
+        "red_flag": extraer_etiqueta(res, "RED_FLAG"),
         "consejo": extraer_etiqueta(res, "CONSEJO_ES"),
         "firme": extraer_etiqueta(res, "RESPUESTA_FIRME"),
         "flexible": extraer_etiqueta(res, "RESPUESTA_FLEXIBLE"),
+    }
+
+def generar_secuencia_followup_ia(contexto: str) -> dict | None:
+    prompt = (
+        "Crea una secuencia profesional de 3 mensajes cortos en ingles (sin sonar desesperado) para recuperar un prospecto freelance que te dejo en visto.\n"
+        f"Proyecto / contexto: {contexto or 'Python scraper / automation script'}\n"
+        "Responde UNICAMENTE con estas 3 etiquetas XML:\n"
+        "<DIA_1>Seguimiento amable 24h despues (25-35 palabras).</DIA_1>\n"
+        "<DIA_3>Seguimiento de valor 3 dias despues ofreciendo muestra o solucion rapida (25-40 palabras).</DIA_3>\n"
+        "<CIERRE_SUAVE>Mensaje de despedida elegante (breakup email, 20-30 palabras) que suele reactivar respuestas.</CIERRE_SUAVE>"
+    )
+    res = generar_texto_ia(prompt, temperatura=0.4)
+    if not res:
+        return None
+    return {
+        "dia_1": extraer_etiqueta(res, "DIA_1"),
+        "dia_3": extraer_etiqueta(res, "DIA_3"),
+        "cierre": extraer_etiqueta(res, "CIERRE_SUAVE"),
+    }
+
+def generar_cierre_y_review_ia(proyecto: str, cliente: str = "") -> dict | None:
+    prompt = (
+        "Crea un kit post-entrega en ingles para enviar a un cliente que acaba de pagar su script/bot freelance.\n"
+        f"Cliente: {cliente or 'Client'}\nProyecto entregado: {proyecto or 'Custom Python automation script'}\n"
+        "Responde UNICAMENTE con estas 3 etiquetas XML:\n"
+        "<ENTREGA>Mensaje profesional entregando el .zip/codigo y explicando que hacer si necesita un ajuste menor (40-55 palabras).</ENTREGA>\n"
+        "<REVIEW>Mensaje corto 2 dias despues pidiendo feedback/testimonio o recomendacion (25-40 palabras).</REVIEW>\n"
+        "<UPSELL>Oferta sutil de mantenimiento mensual o nueva automatizacion para generar ingresos recurrentes (30-45 palabras).</UPSELL>"
+    )
+    res = generar_texto_ia(prompt, temperatura=0.4)
+    if not res:
+        return None
+    return {
+        "entrega": extraer_etiqueta(res, "ENTREGA"),
+        "review": extraer_etiqueta(res, "REVIEW"),
+        "upsell": extraer_etiqueta(res, "UPSELL"),
     }
 
 def generar_post_for_hire() -> None:
@@ -78,6 +116,8 @@ def negociador_objeciones() -> None:
 
     copiar_al_portapapeles(res["firme"])
     print("\n" + "=" * 68)
+    if res.get("red_flag"):
+        print(f"{C.YELLOW}RIESGO:{C.RESET} {res['red_flag']}")
     print(f"{C.BOLD}LECTURA TACTICA:{C.RESET}\n{res['consejo']}\n")
     print(f"{C.BOLD}{C.GREEN}OPCION A — FIRME (Copiada al portapapeles):{C.RESET}\n{res['firme']}\n")
     print(f"{C.BOLD}{C.CYAN}OPCION B — FLEXIBLE (Recortando alcance):{C.RESET}\n{res['flexible']}")
@@ -141,7 +181,7 @@ def main() -> None:
     if modo == "--negociar":
         negociador_objeciones()
         return
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO D: IMAN DE CLIENTES & MARKETING v10.0 ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO D: IMAN DE CLIENTES & MARKETING v12.0 ==={C.RESET}")
     print(" [1] Generar post [For Hire] / [Offer] para Reddit")
     print(" [2] Negociador IA en vivo (responder objeciones)")
     print(" [3] Generar Bios (Reddit, GitHub y Whop)")

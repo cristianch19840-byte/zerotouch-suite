@@ -54,6 +54,14 @@ DEFAULT_CONFIG = {
     "palabras_extra_blacklist": []
 }
 
+STOPWORDS_FREELANCE = {
+    "hiring", "task", "paid", "request", "need", "looking", "for", "dev", "developer",
+    "programmer", "freelancer", "someone", "help", "with", "python", "script", "bot",
+    "code", "coding", "project", "usd", "usdt", "quick", "simple", "small", "make",
+    "build", "create", "want", "that", "this", "from", "into", "and", "the", "you",
+    "can", "will", "pay", "paying", "work", "job", "urgently", "urgent", "asap",
+}
+
 MAPA_PIP = {
     "bs4": "beautifulsoup4",
     "PIL": "pillow",
@@ -83,7 +91,7 @@ MAPA_PIP = {
 }
 
 _LOG_LOCK = threading.Lock()
-_LOG_BUFFER: deque[str] = deque(maxlen=80)
+_LOG_BUFFER: deque[str] = deque(maxlen=100)
 
 def log_evento(msg: str, imprimir: bool = False) -> None:
     linea = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
@@ -126,6 +134,29 @@ def extraer_score(val) -> int:
     if not m:
         return 0
     return max(0, min(10, int(round(float(m.group(1))))))
+
+def extraer_presupuesto_usd(texto: str) -> float:
+    if not texto:
+        return 0.0
+    t = str(texto)
+    m_rango = re.search(r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)\s*(?:-|–|to)\s*(?:\$|€)?(\d{1,5}(?:,\d{3})*(?:\.\d+)?)", t, re.IGNORECASE)
+    if m_rango:
+        a = safe_float(m_rango.group(1))
+        b = safe_float(m_rango.group(2))
+        prom = round((a + b) / 2.0, 2)
+        if 5 <= prom <= 50000:
+            return prom
+    m_pref = re.search(r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)", t, re.IGNORECASE)
+    if m_pref:
+        v = safe_float(m_pref.group(1))
+        if 5 <= v <= 50000:
+            return v
+    m_suf = re.search(r"(\d{1,5}(?:,\d{3})*(?:\.\d+)?)\s*(?:USD|USDT|bucks|\$)", t, re.IGNORECASE)
+    if m_suf:
+        v = safe_float(m_suf.group(1))
+        if 5 <= v <= 50000:
+            return v
+    return 0.0
 
 def cargar_env(ruta: str | None = None) -> None:
     archivo = ruta or os.path.join(ROOT_DIR, ".env")
@@ -229,8 +260,12 @@ def alerta_sonora(prioridad: str = "alta") -> None:
         pass
 
 def similitud_jaccard(texto_a: str, texto_b: str) -> float:
-    sa = set(re.findall(r"[a-z0-9]{3,}", texto_a.lower()))
-    sb = set(re.findall(r"[a-z0-9]{3,}", texto_b.lower()))
+    raw_a = set(re.findall(r"[a-z0-9]{3,}", texto_a.lower()))
+    raw_b = set(re.findall(r"[a-z0-9]{3,}", texto_b.lower()))
+    sa = raw_a - STOPWORDS_FREELANCE
+    sb = raw_b - STOPWORDS_FREELANCE
+    if len(sa) < 2 or len(sb) < 2:
+        sa, sb = raw_a, raw_b
     if not sa or not sb:
         return 0.0
     return len(sa & sb) / len(sa | sb)
@@ -258,6 +293,7 @@ def preparar_db() -> sqlite3.Connection:
             titulo TEXT,
             categoria TEXT,
             presupuesto TEXT,
+            presupuesto_num REAL DEFAULT 0,
             score INTEGER,
             competencia TEXT DEFAULT '',
             confianza TEXT DEFAULT '',
@@ -274,6 +310,7 @@ def preparar_db() -> sqlite3.Connection:
     cols_l = [row[1] for row in conn.execute("PRAGMA table_info(leads)").fetchall()]
     for col_name, col_def in [
         ("autor", "TEXT DEFAULT ''"),
+        ("presupuesto_num", "REAL DEFAULT 0"),
         ("competencia", "TEXT DEFAULT ''"),
         ("confianza", "TEXT DEFAULT ''"),
         ("prioridad_tag", "TEXT DEFAULT ''"),
@@ -283,6 +320,9 @@ def preparar_db() -> sqlite3.Connection:
     ]:
         if col_name not in cols_l:
             conn.execute(f"ALTER TABLE leads ADD COLUMN {col_name} {col_def}")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_estado ON leads(estado)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_link ON leads(link)")
 
     conn.execute(
         """
@@ -344,6 +384,28 @@ def crear_backup_rotativo(max_backups: int = 7) -> str | None:
     log_evento(f"Backup seguro creado: {os.path.basename(dst)}")
     return dst
 
+def listar_scripts_disponibles() -> list[dict]:
+    encontrados = []
+    borrador = os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
+    if os.path.isfile(borrador):
+        encontrados.append({
+            "label": "borrador_cliente.py (Actual)",
+            "ruta": "modulo_b_ejecutor/borrador_cliente.py",
+            "mtime": os.path.getmtime(borrador),
+        })
+    pdir = os.path.join(ROOT_DIR, "proyectos")
+    if os.path.isdir(pdir):
+        for carpeta in os.listdir(pdir):
+            cand = os.path.join(pdir, carpeta, "script.py")
+            if os.path.isfile(cand):
+                encontrados.append({
+                    "label": f"proyectos/{carpeta}/script.py",
+                    "ruta": f"proyectos/{carpeta}/script.py",
+                    "mtime": os.path.getmtime(cand),
+                })
+    encontrados.sort(key=lambda x: x["mtime"], reverse=True)
+    return [{"label": x["label"], "ruta": x["ruta"]} for x in encontrados[:25]]
+
 def verificar_confianza_reddit(autor: str) -> str:
     if not autor or autor.lower() in ("[deleted]", "automoderator", "none", "github", "hackernews"):
         return "🔎 Fuente externa"
@@ -356,7 +418,7 @@ def verificar_confianza_reddit(autor: str) -> str:
     try:
         r = SESSION.get(
             f"https://www.reddit.com/user/{autor}/about.json",
-            headers={"User-Agent": "python:zerotouch-trust:v11.5 (by /u/zerotouch_freelance)"},
+            headers={"User-Agent": "python:zerotouch-trust:v12.0 (by /u/zerotouch_freelance)"},
             timeout=6,
         )
         if r.status_code == 200:
@@ -379,7 +441,7 @@ def verificar_confianza_reddit(autor: str) -> str:
         TRUST_CACHE[clave] = (ahora, res)
     return res
 
-def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 24) -> str | None:
+def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 26) -> str | None:
     api_key = os.getenv("GEMINI_API_KEY_FREE")
     if not api_key:
         log_evento("[!] Falta GEMINI_API_KEY_FREE en .env")

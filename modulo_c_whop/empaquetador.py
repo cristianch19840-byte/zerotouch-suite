@@ -20,11 +20,12 @@ from core_ia import (
     analizar_dependencias,
 )
 
-def crear_factura_html(cliente: str, proyecto: str, monto: str, tipo_cobro: str = "Final Payment (Full Delivery)", incluir_contrato: bool = True) -> tuple[str, str]:
+def crear_factura_html(cliente: str, proyecto: str, monto: str, tipo_cobro: str = "Final Payment (Full Delivery)", incluir_contrato: bool = True, notas_extra: str = "") -> tuple[str, str]:
     cfg = cargar_config()
     num_factura = f"ZT-{datetime.now().strftime('%Y%m%d-%H%M')}"
     fecha = datetime.now().strftime("%B %d, %Y")
 
+    bloque_nota = f'<div class="paybox" style="margin-top:14px;"><div class="label">Notes / Deliverables</div><div class="val" style="font-size:13.5px;margin-top:6px;">{html.escape(notas_extra)}</div></div>' if notas_extra.strip() else ""
     bloque_contrato = ""
     if incluir_contrato:
         bloque_contrato = """
@@ -89,12 +90,24 @@ def crear_factura_html(cliente: str, proyecto: str, monto: str, tipo_cobro: str 
       <div class="label">Accepted Payment Methods</div>
       <div class="val" style="font-size:14px; margin-top:8px;">{html.escape(cfg.get('detalle_pago_factura', cfg.get('metodos_pago', '')))}</div>
     </div>
+    {bloque_nota}
     {bloque_contrato}
     <div class="foot">Thank you for your trust! Press Ctrl+P to save as PDF.</div>
   </div>
 </body>
 </html>"""
     return num_factura, factura_html
+
+def guardar_factura_local(cliente: str, proyecto: str, monto: str, tipo_cobro: str = "Final Payment (Full Delivery)", notas_extra: str = "") -> tuple[str, str, str]:
+    num_factura, factura_html = crear_factura_html(cliente, proyecto, monto, tipo_cobro, incluir_contrato=True, notas_extra=notas_extra)
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", (cliente or "cliente").lower()).strip("_") or "cliente"
+    carpeta = os.path.join(ROOT_DIR, "entregas_clientes", f"{datetime.now().strftime('%Y%m%d')}_{slug}")
+    os.makedirs(carpeta, exist_ok=True)
+    ruta_factura = os.path.join(carpeta, f"FACTURA_{num_factura}.html")
+    with open(ruta_factura, "w", encoding="utf-8") as f:
+        f.write(factura_html)
+    log_evento(f"Factura archivada: {os.path.basename(ruta_factura)} (${monto} USD)")
+    return num_factura, ruta_factura, factura_html
 
 def empaquetar_producto_whop(ruta: str, nombre: str) -> dict:
     cfg = cargar_config()
@@ -135,7 +148,7 @@ def empaquetar_producto_whop(ruta: str, nombre: str) -> dict:
         f"SCRIPT ORIGINAL:\n{codigo_raw}"
     )
 
-    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=34)
+    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=36)
     if not texto:
         return {"error": "La IA no respondio en este intento."}
 
@@ -181,7 +194,7 @@ def empaquetar_producto_whop(ruta: str, nombre: str) -> dict:
         with open(os.path.join(carpeta_salida, fname), "w", encoding="utf-8") as f:
             f.write(content)
 
-    f_zip = os.path.join(carpeta_salida, f"{slug}_whop_titan.zip")
+    f_zip = os.path.join(carpeta_salida, f"{slug}_whop_apex.zip")
     with zipfile.ZipFile(f_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname in ("main.py", "config_ejemplo.json", "requirements.txt", "README.md", "LICENSE.txt", "RUN_WINDOWS.bat"):
             zf.write(os.path.join(carpeta_salida, fname), arcname=fname)
@@ -197,7 +210,7 @@ def empaquetar_producto_whop(ruta: str, nombre: str) -> dict:
     }
 
 def empaquetar_whop() -> None:
-    print(f"\n{C.BOLD}{C.MAGENTA}--- FABRICA TITAN DE PRODUCTOS DIGITALES PARA WHOP ---{C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}--- FABRICA APEX DE PRODUCTOS DIGITALES PARA WHOP ---{C.RESET}")
     ruta_default = os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
     ruta = input(f"Ruta del script [Enter para {ruta_default}]: ").strip() or ruta_default
     nombre = input("Nombre comercial (ej. AutoLead Scraper Pro): ").strip() or "ZeroTouch Automation Tool"
@@ -207,7 +220,7 @@ def empaquetar_whop() -> None:
         print(f"{C.RED}[!] {res['error']}{C.RESET}")
         return
     print("\n" + "=" * 70)
-    print(f"{C.GREEN}PRODUCTO WHOP TITAN ({'AST OK' if res['ast_valido'] else 'REVISAR'}) EN: {res['carpeta']}{C.RESET}")
+    print(f"{C.GREEN}PRODUCTO WHOP APEX ({'AST OK' if res['ast_valido'] else 'REVISAR'}) EN: {res['carpeta']}{C.RESET}")
     print(f"  -> ZIP comprador     : {os.path.basename(res['zip_path'])} (incluye RUN_WINDOWS.bat + LICENSE)")
     print("  -> Copy de Whop      : WHOP_LISTING.md")
     print("  -> Trafico gratis    : POST_PROMO_GRATIS.txt")
@@ -221,18 +234,12 @@ def generar_entrega_y_factura() -> None:
     monto = input("Monto total en USD (ej. 120): ").strip() or "100"
     tipo = input("Tipo [1=50% Adelanto | 2=Pago Final 100% | 3=Retainer Mensual]: ").strip()
     tipo_txt = {"1": "50% Deposit (Project Start)", "3": "Monthly Retainer / Maintenance"}.get(tipo, "Final Payment (Full Delivery)")
-
     ruta_default = os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
     ruta_script = input(f"Script a empacar [Enter para {ruta_default} o escribe NO para solo factura]: ").strip() or ruta_default
 
+    _, ruta_factura, _ = guardar_factura_local(cliente, proyecto, monto, tipo_txt)
+    carpeta = os.path.dirname(ruta_factura)
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", cliente.lower()).strip("_") or "cliente"
-    carpeta = os.path.join(ROOT_DIR, "entregas_clientes", f"{datetime.now().strftime('%Y%m%d')}_{slug}")
-    os.makedirs(carpeta, exist_ok=True)
-
-    num_factura, factura_html = crear_factura_html(cliente, proyecto, monto, tipo_txt, incluir_contrato=True)
-    ruta_factura = os.path.join(carpeta, f"FACTURA_{num_factura}.html")
-    with open(ruta_factura, "w", encoding="utf-8") as f:
-        f.write(factura_html)
 
     if ruta_script.upper() != "NO" and os.path.isfile(ruta_script):
         with open(ruta_script, "r", encoding="utf-8") as f:
@@ -255,7 +262,7 @@ def generar_entrega_y_factura() -> None:
             pass
 
 def main() -> None:
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO C: WHOP TITAN & FACTURACION v11.5 ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO C: WHOP APEX & FACTURACION v12.0 ==={C.RESET}")
     print(" [1] Empaquetar script como Producto Digital para Whop (.ZIP + Launcher + Copy + Short)")
     print(" [2] Generar Kit de Entrega (.ZIP) + Factura & Micro-Contrato HTML/PDF")
     op = input("\nElige una opcion [1-2]: ").strip()
