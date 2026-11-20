@@ -84,6 +84,7 @@ function verTab(id, title, btn) {
   if (id === 't_cfg') cargarConfigWeb();
   if (id === 't_plat') renderPlataformas();
   if (id === 't_stats') renderAnalytics();
+  if (id === 't_aegis' && typeof cargarAegisLab === 'function') cargarAegisLab();
   if (id === 't_whop') { calcularPrecio(); cargarScriptsLista(); }
   if (id === 't_code') cargarScriptsLista();
 }
@@ -229,6 +230,7 @@ function obtenerAccionesCmd() {
     { label: 'Activar / Detener Auto-Sniper', hint: 'Accion', run: () => toggleSniper() },
     { label: 'Cambiar CRM a Tablero Kanban', hint: 'Vista', run: () => { verTab('t_crm', 'Radar & CRM', document.getElementById('nav_crm')); setCrmView('kanban'); } },
     { label: 'Cambiar CRM a Tabla Compacta', hint: 'Vista', run: () => { verTab('t_crm', 'Radar & CRM', document.getElementById('nav_crm')); setCrmView('table'); } },
+    { label: 'Abrir AEGIS-X Lab (Simulador Forense & ML)', hint: 'AEGIS-X', run: () => verTab('t_aegis', 'AEGIS-X Lab ? Motor Forense', document.getElementById('nav_aegis')) },
     { label: 'Ir a Plataformas & RSS', hint: 'Navegacion', run: () => verTab('t_plat', 'Plataformas & RSS', document.getElementById('nav_plat')) },
     { label: 'Ir a Analytics & Graficos SVG', hint: 'Navegacion', run: () => verTab('t_stats', 'Analytics & Pipeline', document.getElementById('nav_stats')) },
     { label: 'Ir a Copiloto Universal & Negociador', hint: 'Estudio IA', run: () => verTab('t_ai', 'Copiloto & Negociador', document.getElementById('nav_ai')) },

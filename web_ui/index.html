@@ -37,6 +37,11 @@
         <span class="nav-label">Plataformas &amp; RSS</span>
         <span class="nav-badge" id="badgeFuentesOk">12</span>
       </button>
+      <button class="nav-item" id="nav_aegis" onclick="verTab('t_aegis','AEGIS-X Lab ? Motor Forense',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span class="nav-label">AEGIS-X Lab</span>
+        <span class="nav-badge">v15</span>
+      </button>
       <button class="nav-item" id="nav_stats" onclick="verTab('t_stats','Analytics & Pipeline',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19h16M7 16v-5M12 16V7M17 16v-3"/></svg>
         <span class="nav-label">Analytics</span>
@@ -281,6 +286,95 @@
           <div class="card">
             <div class="card-head"><h3 class="card-title">Ingresos Facturados por Categoria (USD)</h3></div>
             <div id="chCat"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 3B. AEGIS-X LAB (FORENSE & ML) ==================== -->
+      <section id="t_aegis" class="view">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-head">
+            <h2 class="card-title">Perfiles Operativos AEGIS-X v15.0 (7 Capas &bull; 0 Tokens)</h2>
+            <button class="btn btn-ghost btn-sm" onclick="cargarAegisLab()">Refrescar Telemetria</button>
+          </div>
+          <div id="agPerfilesGrid" class="grid-auto" style="margin-bottom:14px;"></div>
+          <div class="grid-3" style="align-items:end;">
+            <div class="field" style="margin-bottom:0;"><label>Presupuesto Minimo Fijo (USD)</label><input type="number" id="agPresMin" value="20"></div>
+            <div class="field" style="margin-bottom:0;"><label>Whitelist VIP (palabras separadas por coma)</label><input type="text" id="agWhitelist" placeholder="ej. playwright, shopify, telegram, n8n"></div>
+            <div><button class="btn btn-primary" style="width:100%;" onclick="guardarReglasAegis()">Guardar Reglas AEGIS-X</button></div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-bottom:16px;">
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Simulador Forense en Vivo (0 Tokens)</h3>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                <button class="btn btn-success btn-xs" onclick="cargarPresetAegis('oro')">Preset ORO</button>
+                <button class="btn btn-danger btn-xs" onclick="cargarPresetAegis('scam')">Preset Scam</button>
+                <button class="btn btn-ghost btn-xs" onclick="cargarPresetAegis('lowball')">Lowball</button>
+                <button class="btn btn-ghost btn-xs" onclick="cargarPresetAegis('geo')">US-Only</button>
+              </div>
+            </div>
+            <div class="field"><label>Titulo de la oferta</label><input type="text" id="agSimTitulo" placeholder="[Hiring] Python Playwright scraper for Shopify ($300)"></div>
+            <div class="field"><label>Cuerpo / Descripcion</label><textarea id="agSimCuerpo" placeholder="Pega aqui cualquier oferta sospechosa o real para ver su radiografia forense de 7 capas..."></textarea></div>
+            <div class="grid-3">
+              <div class="field"><label>Plataforma</label>
+                <select id="agSimPlat">
+                  <option value="Reddit">Reddit</option>
+                  <option value="Freelancer">Freelancer.com</option>
+                  <option value="GitHub">GitHub Bounty</option>
+                  <option value="HackerNews">HackerNews</option>
+                  <option value="RemoteOK">RemoteOK</option>
+                  <option value="WWR">WeWorkRemotely</option>
+                </select>
+              </div>
+              <div class="field"><label>Perfil a probar</label>
+                <select id="agSimPerfil">
+                  <option value="equilibrado">Equilibrado</option>
+                  <option value="francotirador">Francotirador</option>
+                  <option value="caza_ballenas">Caza Ballenas</option>
+                  <option value="remoto_pro">Remoto Pro</option>
+                </select>
+              </div>
+              <div class="field"><label>Monto API (USD)</label><input type="number" id="agSimMonto" value="0"></div>
+            </div>
+            <button class="btn btn-primary" onclick="correrSimulacionAegis(this)">Analizar con 7 Capas AEGIS-X</button>
+            <div id="agSimResultado" style="margin-top:16px;"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Cerebro ML Local (Naive Bayes + TF-IDF CRM)</h3>
+              <button class="btn btn-purple btn-xs" onclick="reentrenarMlWeb(this)">Re-entrenar Ahora</button>
+            </div>
+            <div id="agMlResumen" style="margin-bottom:16px;"></div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
+            <div class="field"><label>Ensenar ejemplo manual al clasificador</label><input type="text" id="agFbTitulo" placeholder="Ej. Build Telegram crypto alert bot in Python ($250)"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <select id="agFbPlat" style="width:140px;">
+                <option value="Reddit">Reddit</option>
+                <option value="Freelancer">Freelancer</option>
+                <option value="GitHub">GitHub</option>
+                <option value="RemoteOK">RemoteOK</option>
+              </select>
+              <button class="btn btn-success btn-sm" onclick="enviarFeedbackMlWeb(1)">+ Me Interesa (Positivo)</button>
+              <button class="btn btn-danger btn-sm" onclick="enviarFeedbackMlWeb(0)">- Basura (Negativo)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head">
+              <h3 class="card-title">Desglose de Decisiones Auditadas</h3>
+              <span class="muted">Total: <b id="agAudTot">0</b> &bull; Aprob: <b id="agAudApr" class="c-green">0</b> &bull; LSH RAM: <b id="agDedRam" class="c-cyan">0</b></span>
+            </div>
+            <div id="agAudBarras"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Ultimas Ofertas Auditadas (Explicabilidad)</h3></div>
+            <div id="agAudLista" class="prebox" style="max-height:280px;"></div>
           </div>
         </div>
       </section>
@@ -543,6 +637,7 @@
 <script src="/ui/ui_crm.js"></script>
 <script src="/ui/ui_analytics.js"></script>
 <script src="/ui/ui_studio.js"></script>
+<script src="/ui/ui_aegis.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>

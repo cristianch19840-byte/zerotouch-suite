@@ -27,7 +27,7 @@ def main() -> None:
         print(f"   {C.MAGENTA}[8]{C.RESET} Fabrica Whop (.ZIP) & Factura + Micro-Contrato PDF")
         print(f"\n{C.BOLD}  [SISTEMA & AUDITORIA]{C.RESET}")
         print(f"   {C.DIM}[9]{C.RESET} Alerta de Prueba TG | Resumen Diario TG | Backup DB")
-        print(f"   {C.DIM}[T]{C.RESET} Correr Auto-Test E2E Completo (test_e2e_v13.py)")
+        print(f"   {C.DIM}[T]{C.RESET} Correr Auto-Test E2E Completo (test_aegis_e2e_v15.py)")
         print(f"   {C.RED}[0]{C.RESET} Salir")
         op = input(f"\n{C.BOLD}Elige una opcion: {C.RESET}").strip().upper()
 
@@ -59,7 +59,7 @@ def main() -> None:
                 dst = crear_backup_rotativo()
                 print(f"{C.GREEN}[+] Backup creado: {dst}{C.RESET}" if dst else f"{C.YELLOW}[!] Sin DB aun.{C.RESET}")
         elif op == "T":
-            subprocess.run([PY_EXE, os.path.join(ROOT_DIR, "test_e2e_v13.py")])
+            subprocess.run([PY_EXE, os.path.join(ROOT_DIR, "test_aegis_e2e_v15.py")])
         elif op == "0":
             print(f"{C.GREEN}A romperla facturando duro, bro.{C.RESET}")
             break

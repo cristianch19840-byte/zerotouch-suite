@@ -32,6 +32,12 @@ from core_ia import (
     generar_texto_ia,
     extraer_etiqueta,
 )
+from modulo_a_radar_whop.motor_filtrado.modelos import ContextoFiltro
+from modulo_a_radar_whop.motor_filtrado.pipeline import (
+    PERFILES_AEGIS,
+    formatear_radiografia_texto,
+    obtener_pipeline_aegis,
+)
 from modulo_a_radar_whop.motor_zerotouch_v4 import (
     ejecutar_ciclo,
     evaluar_y_enviar,
@@ -1335,6 +1341,28 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 finally:
                     conn.close()
+            elif ruta == "/api/aegis_resumen":
+                cfg = cargar_config()
+                aegis = obtener_pipeline_aegis()
+                perfiles_list = [
+                    {
+                        "nombre": p.nombre,
+                        "descripcion": p.descripcion,
+                        "umbral_aprobacion": p.umbral_aprobacion,
+                        "presupuesto_minimo_usd": p.presupuesto_minimo_usd,
+                        "tarifa_minima_usd_hr": p.tarifa_minima_usd_hr,
+                    }
+                    for p in PERFILES_AEGIS.values()
+                ]
+                self._send_json({
+                    "perfil_activo": str(cfg.get("aegis_perfil") or "equilibrado"),
+                    "presupuesto_minimo_usd": safe_float(cfg.get("presupuesto_minimo_usd"), 20.0),
+                    "whitelist_vip": cfg.get("palabras_extra_whitelist") or [],
+                    "perfiles": perfiles_list,
+                    "auditoria": aegis.auditoria.obtener_resumen(30) if aegis.auditoria else {},
+                    "dedup_stats": aegis.dedup.estadisticas(),
+                    "ml_insights": aegis.ml.generar_insights_rentabilidad(),
+                })
             elif ruta == "/api/export":
                 conn = preparar_db()
                 try:
@@ -1559,6 +1587,72 @@ class Handler(BaseHTTPRequestHandler):
             elif ruta == "/api/whop_pack":
                 res = empaquetar_producto_whop(str(data.get("ruta", "")), str(data.get("nombre", "")))
                 self._send_json(res)
+            elif ruta == "/api/aegis_simular":
+                cfg = cargar_config()
+                aegis = obtener_pipeline_aegis()
+                plat = str(data.get("plataforma") or data.get("fuente") or "Reddit")
+                perfil_nom = str(data.get("perfil") or cfg.get("aegis_perfil") or "equilibrado")
+                ctx = ContextoFiltro(
+                    fuente=str(data.get("fuente") or plat),
+                    plataforma=plat,
+                    sub_o_categoria=str(data.get("fuente") or plat),
+                    monto_api_usd=safe_float(data.get("monto_api"), 0.0),
+                    perfil_nombre=perfil_nom,
+                    tarifa_minima_usd_hr=max(10.0, round(safe_float(cfg.get("tarifa_hora_usd"), 25.0) * 0.58, 1)),
+                    presupuesto_minimo_usd=safe_float(cfg.get("presupuesto_minimo_usd"), 20.0),
+                    solo_freelance_corto=bool(cfg.get("solo_freelance_corto", False)),
+                    palabras_blacklist_usuario=cfg.get("palabras_extra_blacklist") or [],
+                    palabras_whitelist_usuario=cfg.get("palabras_extra_whitelist") or [],
+                )
+                v = aegis.evaluar(
+                    titulo=str(data.get("titulo") or ""),
+                    cuerpo=str(data.get("cuerpo") or ""),
+                    post_id="sim_web",
+                    ctx=ctx,
+                    simular_sin_dedup=True,
+                    registrar_dedup=False,
+                    registrar_auditoria=False,
+                )
+                self._send_json({
+                    "radiografia": aegis.radiografia_dict(v),
+                    "texto_reporte": formatear_radiografia_texto(v),
+                })
+            elif ruta == "/api/aegis_perfil":
+                cfg = cargar_config()
+                if "perfil" in data:
+                    p_nom = str(data.get("perfil") or "").strip().lower()
+                    if p_nom not in PERFILES_AEGIS:
+                        self._send_json({"error": f"Perfil invalido: {p_nom}"})
+                        return
+                    cfg["aegis_perfil"] = p_nom
+                    log_evento(f"Perfil AEGIS-X cambiado a '{p_nom}'")
+                if "presupuesto_minimo_usd" in data:
+                    cfg["presupuesto_minimo_usd"] = max(5.0, safe_float(data.get("presupuesto_minimo_usd"), 20.0))
+                if "palabras_extra_whitelist" in data:
+                    wl = data.get("palabras_extra_whitelist") or []
+                    cfg["palabras_extra_whitelist"] = [str(w).strip() for w in wl if str(w).strip()]
+                guardar_config(cfg)
+                self._send_json({"ok": True, "perfil": cfg.get("aegis_perfil")})
+            elif ruta == "/api/aegis_feedback":
+                tit = str(data.get("titulo") or "").strip()
+                if not tit:
+                    self._send_json({"error": "Falta el titulo de ejemplo"})
+                    return
+                aegis = obtener_pipeline_aegis()
+                st = aegis.ml.registrar_feedback(
+                    titulo=tit,
+                    etiqueta=1 if safe_bool(data.get("etiqueta")) else 0,
+                    cuerpo=str(data.get("cuerpo") or ""),
+                    plataforma=str(data.get("plataforma") or "Manual"),
+                    categoria=str(data.get("categoria") or "Tech"),
+                    ganancia_usd=safe_float(data.get("ganancia_usd"), 0.0),
+                    reentrenar=True,
+                )
+                self._send_json({"ok": True, "muestras_pos": st.muestras_pos, "muestras_neg": st.muestras_neg, "habilitado": st.habilitado})
+            elif ruta == "/api/aegis_reentrenar":
+                aegis = obtener_pipeline_aegis()
+                st = aegis.ml.entrenar_desde_db(forzar=True)
+                self._send_json({"ok": True, "habilitado": st.habilitado, "muestras_pos": st.muestras_pos, "muestras_neg": st.muestras_neg, "cv_f1": st.cv_f1})
             elif ruta == "/api/factura":
                 _, _, html_doc = guardar_factura_local(
                     str(data.get("cliente", "Client")),
