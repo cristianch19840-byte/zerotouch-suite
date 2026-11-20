@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="cyan">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZeroTouch OMNI-GRID v14.0 — Obsidian Studio</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+  <link rel="stylesheet" href="/ui/components.css">
+</head>
+<body>
+<div class="app-shell" id="appShell">
+
+  <!-- ==================== SIDEBAR ==================== -->
+  <aside class="sidebar">
+    <div class="brand-row">
+      <div class="brand-mark">
+        <div class="brand-logo">ZT</div>
+        <div class="brand-text">
+          <div class="brand-title">ZeroTouch <span>OMNI</span></div>
+          <div class="brand-sub">v14.0 • Freelance Studio</div>
+        </div>
+      </div>
+      <button class="icon-btn" id="btnCollapse" onclick="toggleSidebar()" title="Colapsar menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+    </div>
+
+    <nav class="nav-scroll">
+      <div class="nav-section">Operacion</div>
+      <button class="nav-item active" id="nav_crm" onclick="verTab('t_crm','Radar & CRM',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="2.5"/></svg>
+        <span class="nav-label">Radar &amp; CRM</span>
+        <span class="nav-badge" id="badgeLeadsNuevos">0</span>
+      </button>
+      <button class="nav-item" id="nav_plat" onclick="verTab('t_plat','Plataformas & RSS',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        <span class="nav-label">Plataformas &amp; RSS</span>
+        <span class="nav-badge" id="badgeFuentesOk">12</span>
+      </button>
+      <button class="nav-item" id="nav_stats" onclick="verTab('t_stats','Analytics & Pipeline',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19h16M7 16v-5M12 16V7M17 16v-3"/></svg>
+        <span class="nav-label">Analytics</span>
+      </button>
+
+      <div class="nav-section">Estudio IA</div>
+      <button class="nav-item" id="nav_ai" onclick="verTab('t_ai','Copiloto & Negociador',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/></svg>
+        <span class="nav-label">Copiloto &amp; Cierre</span>
+      </button>
+      <button class="nav-item" id="nav_code" onclick="verTab('t_code','Refinador de Codigo IDE',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span class="nav-label">Refinador IDE</span>
+      </button>
+
+      <div class="nav-section">Facturacion</div>
+      <button class="nav-item" id="nav_mkt" onclick="verTab('t_mkt','Marketing & Follow-Up',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="nav-label">Marketing &amp; Cierre</span>
+      </button>
+      <button class="nav-item" id="nav_whop" onclick="verTab('t_whop','Calculadora, Facturas & Whop',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        <span class="nav-label">Cobros, Calc &amp; Whop</span>
+      </button>
+
+      <div class="nav-section">Sistema</div>
+      <button class="nav-item" id="nav_cfg" onclick="verTab('t_cfg','Ajustes & Terminal',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="nav-label">Ajustes &amp; Salud</span>
+      </button>
+    </nav>
+
+    <div class="side-footer">
+      <div class="theme-dots" title="Cambiar color de acento">
+        <button class="theme-dot active" data-t="cyan" style="background:#38bdf8" onclick="setTheme('cyan')" title="Cyan Electric"></button>
+        <button class="theme-dot" data-t="violet" style="background:#a78bfa" onclick="setTheme('violet')" title="Violet Neon"></button>
+        <button class="theme-dot" data-t="emerald" style="background:#34d399" onclick="setTheme('emerald')" title="Emerald Matrix"></button>
+        <button class="theme-dot" data-t="amber" style="background:#fbbf24" onclick="setTheme('amber')" title="Amber Gold"></button>
+      </div>
+      <div class="side-footer-text">OMNI-GRID v14 • 100% Local</div>
+    </div>
+  </aside>
+
+  <!-- ==================== WORKSPACE ==================== -->
+  <div class="workspace">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title" id="pageTitle">Radar &amp; CRM</h1>
+        <div class="live-pill" id="livePill">
+          <span class="pulse-dot"></span>
+          <span id="livePillText">Listo</span>
+        </div>
+      </div>
+
+      <button class="cmd-trigger" onclick="abrirCmdPalette()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>Buscar comando o lead...</span>
+        <span class="kbd">Ctrl K</span>
+      </button>
+
+      <div class="topbar-actions">
+        <button class="btn" id="btnSniper" onclick="toggleSniper()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          <span id="sniperTxt">Sniper: OFF</span>
+        </button>
+        <button class="btn btn-primary" id="btnScanTop" onclick="lanzarEscaneo()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          <span>Escanear</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="cargarDatos(true)" title="Refrescar (R)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+        <a class="btn btn-ghost btn-sm" href="/api/export" title="Exportar CRM a Excel (.CSV)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>CSV</span>
+        </a>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- ==================== 1. RADAR & CRM ==================== -->
+      <section id="t_crm" class="view active">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-lbl">Facturado Total</span>
+              <span class="kpi-ico c-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+            </div>
+            <div class="kpi-val c-green" id="kUsd">$0.00</div>
+            <div class="kpi-sub" id="kUsdCop">~$0 COP neto</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-lbl">Pipeline Vivo</span>
+              <span class="kpi-ico c-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
+            </div>
+            <div class="kpi-val c-amber" id="kPipe">$0</div>
+            <div class="kpi-sub">En contacto / negociacion</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-lbl">Leads / Ganados</span>
+              <span class="kpi-ico c-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg></span>
+            </div>
+            <div class="kpi-val" id="kLeads">0 / 0</div>
+            <div class="kpi-sub" id="kTicket">Ticket prom: $0</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-lbl">Tasa de Cierre</span>
+              <span class="kpi-ico c-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+            </div>
+            <div class="kpi-val c-cyan" id="kCierre">0%</div>
+            <div class="kpi-sub">Sobre leads contactados</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-lbl">Salud Fuentes</span>
+              <span class="kpi-ico c-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/></svg></span>
+            </div>
+            <div class="kpi-val c-cyan" id="kFuentes">0 / 0</div>
+            <div class="kpi-sub">Conectores respondiendo</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-lbl">Tokens Ahorrados</span>
+              <span class="kpi-ico c-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+            </div>
+            <div class="kpi-val c-purple" id="kTok">0</div>
+            <div class="kpi-sub" id="kTokPct">0% filtrado 0-tokens</div>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="qSearch" placeholder="Filtrar titulo, plataforma, categoria o nota..." oninput="renderCrmActual()">
+          </div>
+
+          <div class="chip-group" id="tipoChips">
+            <button class="chip active" data-tipo="" onclick="setFiltroTipo('', this)">Todos</button>
+            <button class="chip" data-tipo="freelance" onclick="setFiltroTipo('freelance', this)">Freelance</button>
+            <button class="chip" data-tipo="bounty" onclick="setFiltroTipo('bounty', this)">Bounties</button>
+            <button class="chip" data-tipo="remoto" onclick="setFiltroTipo('remoto', this)">Remoto</button>
+          </div>
+
+          <select id="qPlat" onchange="renderCrmActual()"><option value="">Todas las plataformas</option></select>
+          <select id="qEstado" onchange="renderCrmActual()">
+            <option value="">Todos los estados</option>
+            <option value="nuevo">Nuevo</option>
+            <option value="contactado">Contactado</option>
+            <option value="negociando">Negociando</option>
+            <option value="ganado">Ganado</option>
+            <option value="descartado">Descartado</option>
+          </select>
+          <select id="qMinScore" onchange="renderCrmActual()">
+            <option value="0">Score: Todos</option>
+            <option value="7">Score 7+</option>
+            <option value="8">Score 8+ (Top)</option>
+          </select>
+          <select id="qSort" onchange="renderCrmActual()">
+            <option value="reciente">Recientes</option>
+            <option value="score">Mayor Score</option>
+            <option value="dinero">Mayor Presupuesto $</option>
+          </select>
+
+          <div class="chip-group" style="margin-left:auto;" title="Cambiar vista CRM">
+            <button class="chip active" id="btnViewTable" onclick="setCrmView('table')">Tabla</button>
+            <button class="chip" id="btnViewKanban" onclick="setCrmView('kanban')">Kanban</button>
+          </div>
+        </div>
+
+        <div id="crmStatusBanner" class="muted" style="margin-bottom:10px;min-height:16px;"></div>
+
+        <div id="crmTableWrap" class="table-shell">
+          <table class="crm-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Score</th><th>Plataforma</th><th>Oportunidad &amp; Competencia</th>
+                <th>Presupuesto</th><th>Estado</th><th>USD</th><th>Nota</th><th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyLeads"></tbody>
+          </table>
+        </div>
+
+        <div id="crmKanbanWrap" class="kanban-board" style="display:none;"></div>
+      </section>
+
+      <!-- ==================== 2. PLATAFORMAS & RSS ==================== -->
+      <section id="t_plat" class="view">
+        <div class="card" style="margin-bottom:16px;">
+          <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px;">
+            <div>
+              <h2 class="card-title">Centro de Plataformas OMNI-GRID (12+ Fuentes)</h2>
+              <div class="muted" style="margin-top:4px;">Activa o pausa conectores al instante. Enciende "Solo Freelance Corto" si buscas proyectos rapidos de pago inmediato.</div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+              <label style="display:inline-flex;align-items:center;gap:9px;padding:7px 12px;border-radius:9px;background:rgba(5,7,14,0.75);border:1px solid var(--border-strong);cursor:pointer;font-size:12.5px;font-weight:600;">
+                <span class="switch"><input type="checkbox" id="chkSoloCorto" onchange="toggleSoloCorto(this.checked)"><span class="slider"></span></span>
+                <span>Solo Freelance Corto &amp; Bounties</span>
+              </label>
+              <button class="btn btn-primary" onclick="correrDryRunWeb(this, 'platDryOut')">Test Todas las Fuentes (0 Tokens)</button>
+            </div>
+          </div>
+          <div id="platDryOut" class="prebox" style="display:none;margin-top:14px;"></div>
+        </div>
+
+        <div id="gridPlataformas" class="grid-auto" style="margin-bottom:18px;"></div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Agregar Feed RSS / Atom Propio</h3></div>
+            <div class="field"><label>Nombre corto</label><input type="text" id="rssNom" placeholder="Ej. PythonOrg Jobs / IndieHackers / Bolsa Local"></div>
+            <div class="field"><label>URL del feed (.rss / .xml / .atom)</label><input type="url" id="rssUrl" placeholder="https://ejemplo.com/jobs.rss"></div>
+            <button class="btn btn-success" onclick="agregarRssWeb()">Agregar Feed al Radar</button>
+            <div id="listaRssCustom" style="margin-top:16px;"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Telemetria de Conectores (Ultima Corrida)</h3></div>
+            <div id="tablaSaludDetalle" class="prebox" style="max-height:320px;">Corre un escaneo o "Test Todas las Fuentes" para inspeccionar el estado de cada conector.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 3. ANALYTICS ==================== -->
+      <section id="t_stats" class="view">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Embudo de Conversion CRM</h3></div>
+            <div id="chartEmbudoSvg"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Eficiencia de Tokens IA (Batch + Pre-filtro)</h3></div>
+            <div id="chartTokensSvg"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Top Plataformas por Leads Detectados</h3></div>
+            <div id="chFuentes"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Ingresos Facturados por Categoria (USD)</h3></div>
+            <div id="chCat"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 4. ESTUDIO IA ==================== -->
+      <section id="t_ai" class="view">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Copiloto Universal (Cualquier Link, #ID o Texto)</h3></div>
+            <div class="field">
+              <label>Enlace de oferta (Reddit, Freelancer, GitHub, HN, RemoteOK, WWR...), #ID o descripcion</label>
+              <textarea id="aiOferta" placeholder="Pega cualquier URL de proyecto, escribe #4 para cargar de tu CRM, o pega el pedido del cliente..."></textarea>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="correrCopilotoWeb(this)">Generar Estrategia + Pitch A/B + Codigo</button>
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('aiOferta').value=''">Limpiar</button>
+            </div>
+            <div id="aiResCopiloto" style="margin-top:16px;"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Negociador Mata-Objeciones + Red Flag</h3></div>
+            <div class="field"><label>Contexto y precio que cotizaste</label><input type="text" id="negCtx" placeholder="Ej. Shopify Python Scraper, pedi $150 USD"></div>
+            <div class="field">
+              <label>Atajos de objeciones comunes</label>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-ghost btn-xs" onclick="setObjecion('Your price is too high, another dev offered $35.')">Muy caro</button>
+                <button class="btn btn-ghost btn-xs" onclick="setObjecion('Can you build a working sample for free first so I can test it?')">Pide muestra gratis</button>
+                <button class="btn btn-ghost btn-xs" onclick="setObjecion('I need this delivered in 4 hours today, can you rush it for the same price?')">Urgente hoy</button>
+                <button class="btn btn-ghost btn-xs" onclick="setObjecion('I will only pay 100% after you send me the full source code.')">Solo paga al final</button>
+              </div>
+            </div>
+            <div class="field"><label>Que te respondio el cliente?</label><textarea id="negMsg" placeholder="Pega aqui el mensaje del cliente..."></textarea></div>
+            <button class="btn btn-purple" onclick="correrNegociadorWeb(this)">Generar Contraofertas</button>
+            <div id="aiResNeg" style="margin-top:16px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 5. REFINADOR IDE ==================== -->
+      <section id="t_code" class="view">
+        <div class="grid-2" style="grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.35fr);">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Refinador de Codigo IA (Auto-AST)</h3></div>
+            <div class="field">
+              <label>Script en tu PC</label>
+              <div style="display:flex;gap:8px;">
+                <select id="codeSel" onchange="cargarCodigoScript()" style="flex:1;"></select>
+                <button class="btn btn-ghost btn-sm" onclick="cargarScriptsLista()">Recargar</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>Mejoras rapidas de 1 clic</label>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-ghost btn-xs" onclick="setInstruccionCode('Migra el scraping a Playwright headless con reintentos y User-Agent real.')">Pasar a Playwright</button>
+                <button class="btn btn-ghost btn-xs" onclick="setInstruccionCode('Agrega exportacion limpia a CSV UTF-8 y JSON con resumen final en consola.')">Exportar CSV+JSON</button>
+                <button class="btn btn-ghost btn-xs" onclick="setInstruccionCode('Agrega manejo robusto de excepciones, timeouts, logging profesional y archivo config.json.')">Blindar errores</button>
+                <button class="btn btn-ghost btn-xs" onclick="setInstruccionCode('Elimina cualquier dato privado o URL fija y pide los parametros por consola/config para venderlo en Whop.')">Preparar Whop</button>
+              </div>
+            </div>
+            <div class="field"><label>Instruccion de mejora</label><textarea id="codeInstr" placeholder="Describe exactamente que quieres agregar o corregir en este script..."></textarea></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="refinarCodigoWeb(this)">Refinar &amp; Validar AST</button>
+              <button class="btn btn-ghost btn-sm" onclick="copiarCodigoActual()">Copiar Codigo</button>
+            </div>
+            <div id="codeMeta" class="muted" style="margin-top:14px;"></div>
+          </div>
+
+          <div class="ide-shell">
+            <div class="ide-bar">
+              <div class="ide-dots">
+                <i style="background:#ef4444"></i>
+                <i style="background:#f59e0b"></i>
+                <i style="background:#22c55e"></i>
+                <span id="ideFilename" style="margin-left:8px;color:var(--text-0);font-weight:600;">borrador_cliente.py</span>
+              </div>
+              <span id="ideBadge">Python 3.12</span>
+            </div>
+            <div id="codeView" class="ide-body">
+              <div class="empty-state"><b>Sin codigo cargado</b>Genera un script en el Copiloto o elige uno en el selector.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 6. MARKETING & CIERRE ==================== -->
+      <section id="t_mkt" class="view">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Iman de Clientes — Posts [For Hire] / [Offer]</h3></div>
+            <div class="field"><label>Subreddit destino</label>
+              <select id="mktSub">
+                <option value="r/forhire">r/forhire (Tarifas altas $50+)</option>
+                <option value="r/slavelabour">r/slavelabour (Rapido $20-$80)</option>
+                <option value="r/DoneDirtCheap">r/DoneDirtCheap (Rapido $15-$60)</option>
+                <option value="r/Jobs4Bitcoins">r/Jobs4Bitcoins (Pagos USDT/Cripto)</option>
+                <option value="r/freelance_forhire">r/freelance_forhire</option>
+              </select>
+            </div>
+            <div class="field"><label>Especialidad a destacar (opcional)</label><input type="text" id="mktEnf" placeholder="Python Scraping, Bots Telegram/Discord & Automation"></div>
+            <button class="btn btn-primary" onclick="generarPostWeb(this)">Redactar Post Magnetico</button>
+            <div id="resMktPost" style="margin-top:16px;"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Secuencia Follow-Up (3 Dias) &amp; Kit Post-Entrega</h3></div>
+            <div class="field"><label>Proyecto / Contexto del cliente</label><input type="text" id="seqCtx" placeholder="Ej. Shopify Price Scraper ($150 USD) para u/john"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+              <button class="btn btn-primary btn-sm" onclick="generarFollowupWeb(this)">Secuencia 3 Dias</button>
+              <button class="btn btn-success btn-sm" onclick="generarDeliveryWeb(this)">Entrega + Review + Upsell</button>
+            </div>
+            <div id="resSeq"></div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:18px 0;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+              <button class="btn btn-purple btn-sm" onclick="generarBiosWeb(this)">Generar 3 Bios</button>
+              <button class="btn btn-success btn-sm" onclick="generarPortafolioWeb(this)">Generar PORTAFOLIO.md</button>
+            </div>
+            <div id="resMktBios"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 7. COBROS, CALCULADORA & WHOP ==================== -->
+      <section id="t_whop" class="view">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Calculadora Freelance USD &rarr; COP (Comparador de Comisiones)</h3></div>
+            <div class="field">
+              <label><span>Horas estimadas</span><b id="lblHrs" class="c-cyan">4h</b></label>
+              <input type="range" id="calcHrs" min="1" max="40" step="0.5" value="4" oninput="calcularPrecio()">
+            </div>
+            <div class="grid-3">
+              <div class="field"><label>Tarifa/Hr (USD)</label><input type="number" id="calcRate" value="25" oninput="calcularPrecio()"></div>
+              <div class="field"><label>Multiplicador</label>
+                <select id="calcMult" onchange="calcularPrecio()">
+                  <option value="1">Normal (1.0x)</option>
+                  <option value="1.25">Complejo (1.25x)</option>
+                  <option value="1.5">Urgente (1.5x)</option>
+                </select>
+              </div>
+              <div class="field"><label>TRM (COP/USD)</label><input type="number" id="calcTrm" value="4200" oninput="calcularPrecio()"></div>
+            </div>
+
+            <div class="muted" style="margin-top:4px;">Precio base calculado: <b id="cBruto" style="color:var(--text-0);font-size:14px;">$100.00 USD</b></div>
+            <div id="calcCompareGrid" class="gateway-grid"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Factura + Micro-Contrato PDF (Auto-Archivada)</h3></div>
+            <div class="grid-2" style="gap:10px;">
+              <div class="field"><label>Cliente / Usuario</label><input type="text" id="invCli" placeholder="u/john_founder"></div>
+              <div class="field"><label>Monto (USD)</label><input type="number" id="invUsd" value="120"></div>
+            </div>
+            <div class="field"><label>Concepto del proyecto</label><input type="text" id="invProj" placeholder="Custom Python Shopify Scraper & CSV Pipeline"></div>
+            <div class="grid-2" style="gap:10px;">
+              <div class="field"><label>Modalidad</label>
+                <select id="invTipo">
+                  <option value="50% Deposit (Project Start)">50% Adelanto</option>
+                  <option value="Final Payment (Full Delivery)">100% Pago Final</option>
+                  <option value="Monthly Retainer / Maintenance">Mensualidad</option>
+                </select>
+              </div>
+              <div class="field"><label>Nota / Entregables</label><input type="text" id="invNota" placeholder="Includes main.py & CSV export"></div>
+            </div>
+            <button class="btn btn-success" onclick="generarFacturaWeb()">Abrir &amp; Archivar Factura PDF</button>
+
+            <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;">
+            <div class="card-head"><h3 class="card-title">Fabrica 1-Click para Whop (.ZIP + Launcher + Licencia)</h3></div>
+            <div class="grid-2" style="gap:10px;">
+              <div class="field"><label>Nombre comercial</label><input type="text" id="whopNom" placeholder="AutoLead Scraper Pro"></div>
+              <div class="field"><label>Script fuente</label><select id="whopSel"></select></div>
+            </div>
+            <button class="btn btn-purple" onclick="empaquetarWhopWeb(this)">Empaquetar .ZIP Comercial</button>
+            <div id="resWhop" style="margin-top:14px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 8. AJUSTES & TERMINAL ==================== -->
+      <section id="t_cfg" class="view">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Configuracion Global (config.json)</h3></div>
+            <div class="grid-2" style="gap:10px;">
+              <div class="field"><label>Marca Freelance</label><input type="text" id="cMarca"></div>
+              <div class="field"><label>GitHub URL</label><input type="text" id="cGh"></div>
+            </div>
+            <div class="field"><label>Especialidad Tecnica</label><input type="text" id="cEsp"></div>
+            <div class="field"><label>Metodos de Pago (Pitches)</label><input type="text" id="cPagos"></div>
+            <div class="field"><label>Detalle de Pago (Facturas PDF)</label><input type="text" id="cPagosFac"></div>
+            <div class="grid-2" style="gap:10px;">
+              <div class="field"><label>Whop Store URL</label><input type="text" id="cWhop"></div>
+              <div class="field"><label>Telegram Admin ID (DM)</label><input type="text" id="cAdmin" placeholder="Opcional"></div>
+            </div>
+            <div class="grid-3">
+              <div class="field"><label>Tarifa/Hr USD</label><input type="number" id="cTarifa"></div>
+              <div class="field"><label>TRM COP</label><input type="number" id="cTrm"></div>
+              <div class="field"><label>Score Min (1-10)</label><input type="number" id="cScore"></div>
+            </div>
+            <div class="grid-3">
+              <div class="field"><label>Sniper (seg)</label><input type="number" id="cSniper"></div>
+              <div class="field"><label>Max Edad (hrs)</label><input type="number" id="cMaxHrs"></div>
+              <div class="field"><label>Lote IA (1-8)</label><input type="number" id="cBatch"></div>
+            </div>
+            <div class="grid-2" style="gap:10px;">
+              <div class="field"><label>Max Ofertas IA / ciclo</label><input type="number" id="cMaxIa"></div>
+              <div class="field"><label>Blacklist Extra (coma)</label><input type="text" id="cBlack" placeholder="unpaid, internship"></div>
+            </div>
+            <button class="btn btn-primary" onclick="guardarConfigWeb()">Guardar Configuracion</button>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Diagnostico &amp; Terminal en Vivo</h3></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+              <button class="btn btn-primary btn-sm" onclick="correrDiagWeb(this)">Probar Conexiones</button>
+              <button class="btn btn-ghost btn-sm" onclick="correrDryRunWeb(this, 'resDiag')">Test Escaner (0 Tokens)</button>
+              <button class="btn btn-purple btn-sm" onclick="probarTelegramWeb(this)">Alerta Prueba TG</button>
+              <button class="btn btn-success btn-sm" onclick="hacerBackupWeb()">Backup DB</button>
+            </div>
+            <div id="resDiag" class="prebox" style="margin-bottom:16px;">Haz clic en "Probar Conexiones" para auditar Reddit, Telegram y Gemini.</div>
+            <div class="card-head"><h3 class="card-title">Consola de Eventos en Vivo</h3></div>
+            <div id="liveLogs" class="prebox" style="max-height:240px;">Sin eventos recientes todavia.</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ==================== SLIDE-OVER DRAWER ==================== -->
+<div class="drawer-backdrop" id="drawerBg" onclick="if(event.target===this)cerrarDrawer()">
+  <div class="drawer">
+    <div class="drawer-head">
+      <div>
+        <h3 class="card-title" id="drawerTitle">Copiloto Universal</h3>
+        <div class="muted" id="drawerSub" style="margin-top:2px;">Analizando oportunidad...</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="cerrarDrawer()">Cerrar (Esc)</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </div>
+</div>
+
+<!-- ==================== COMMAND PALETTE (CTRL+K) ==================== -->
+<div class="cmd-backdrop" id="cmdBg" onclick="if(event.target===this)cerrarCmdPalette()">
+  <div class="cmd-box">
+    <div class="cmd-input-row">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color:var(--accent)"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="cmdInput" placeholder="Ir a vista, escanear, buscar lead #ID..." oninput="renderCmdList()">
+      <span class="kbd">ESC</span>
+    </div>
+    <div class="cmd-list" id="cmdList"></div>
+  </div>
+</div>
+
+<!-- ==================== TOAST STACK ==================== -->
+<div class="toast-stack" id="toastStack"></div>
+
+<script src="/ui/ui_crm.js"></script>
+<script src="/ui/ui_analytics.js"></script>
+<script src="/ui/ui_studio.js"></script>
+<script src="/ui/app.js"></script>
+</body>
+</html>
