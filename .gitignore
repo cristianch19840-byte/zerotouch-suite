@@ -1,10 +1,12 @@
 .env
 config.json
+*.tmp
 *.db
 *.db-wal
 *.db-shm
 *.csv
 __pycache__/
+**/__pycache__/
 proyectos/
 entregas_clientes/
 backups/

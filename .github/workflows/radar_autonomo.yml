@@ -1,18 +1,24 @@
-name: Radar Zero-Touch v12 APEX
+name: Radar Zero-Touch v13 OMNI-GRID
 
 on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Modo prueba 0-tokens (no gasta Gemini ni envia alertas)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
-  group: zerotouch-apex-radar
+  group: zerotouch-omni-v13
   cancel-in-progress: false
 
 jobs:
   radar:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - name: Clonar repositorio
         uses: actions/checkout@v4
@@ -25,21 +31,28 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Restaurar cache de leads vistos
+      - name: Restaurar cache SQLite OMNI-GRID
         uses: actions/cache@v4
         with:
           path: estado_radar_v4.db
-          key: radar-db-v12-${{ github.run_id }}
+          key: radar-db-v13-${{ github.run_id }}
           restore-keys: |
+            radar-db-v13-
             radar-db-v12-
             radar-db-v10-
 
-      - name: Ejecutar Radar APEX v12.0
+      - name: Ejecutar Radar OMNI-GRID v13.0
         env:
+          PYTHONUNBUFFERED: '1'
           GEMINI_API_KEY_FREE: ${{ secrets.GEMINI_API_KEY_FREE }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-        run: python modulo_a_radar_whop/motor_zerotouch_v4.py
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python modulo_a_radar_whop/motor_zerotouch_v4.py --dry-run
+          else
+            python modulo_a_radar_whop/motor_zerotouch_v4.py
+          fi
