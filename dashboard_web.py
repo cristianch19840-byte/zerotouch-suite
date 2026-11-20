@@ -1,8 +1,11 @@
 import os
 import io
+import re
 import csv
 import sys
 import json
+import socket
+import zipfile
 import threading
 import webbrowser
 from datetime import datetime
@@ -12,7 +15,19 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from core_ia import C, cargar_config, guardar_config, preparar_db
+from core_ia import (
+    C,
+    SESSION,
+    cargar_config,
+    guardar_config,
+    preparar_db,
+    crear_backup_rotativo,
+    generar_texto_ia,
+    extraer_etiqueta,
+    limpiar_bloque_codigo,
+    validar_y_reparar_python,
+    analizar_dependencias,
+)
 from modulo_a_radar_whop.motor_zerotouch_v4 import ejecutar_ciclo
 from modulo_b_ejecutor.copiloto import descargar_post_reddit, cargar_desde_crm, analizar_oferta_completo
 from modulo_c_whop.empaquetador import crear_factura_html
@@ -26,221 +41,300 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ZeroTouch PRIME v10.0 — Command Center</title>
+<title>ZeroTouch PRIME v10.5 — Freelance OS</title>
 <style>
-  :root { --bg:#070b14; --card:#0f172a; --card2:#162033; --border:#1e293b; --text:#f1f5f9; --muted:#94a3b8; --accent:#38bdf8; --green:#4ade80; --amber:#fbbf24; --red:#f87171; --purple:#c084fc; }
+  :root {
+    --bg:#060911; --sidebar:#0b1120; --card:#0f172a; --card2:#162033;
+    --border:#1e293b; --text:#f1f5f9; --muted:#94a3b8;
+    --accent:#38bdf8; --accent2:#2563eb; --green:#4ade80; --amber:#fbbf24; --red:#f87171; --purple:#c084fc;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); }
-  .shell { max-width:1380px; margin:0 auto; padding:22px; }
-  header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:14px; margin-bottom:18px; }
-  h1 { margin:0; font-size:22px; }
-  h1 span { color:var(--accent); }
-  .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; border-bottom:1px solid var(--border); padding-bottom:12px; }
-  .tab { background:transparent; color:var(--muted); border:1px solid var(--border); padding:9px 16px; border-radius:9px; cursor:pointer; font-size:13px; font-weight:600; transition:.15s; }
-  .tab:hover { color:var(--text); border-color:var(--accent); }
-  .tab.active { background:linear-gradient(135deg,#0284c7,#2563eb); color:#fff; border-color:transparent; }
-  .view { display:none; }
-  .view.active { display:block; }
-  .actions { display:flex; gap:9px; flex-wrap:wrap; }
-  button, a.btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; text-decoration:none; transition:.15s; }
+  body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
+  /* SIDEBAR */
+  .side { width:245px; background:var(--sidebar); border-right:1px solid var(--border); padding:20px 14px; display:flex; flex-direction:column; position:fixed; inset:0 auto 0 0; overflow-y:auto; }
+  .brand { font-size:18px; font-weight:800; padding:4px 10px 16px; border-bottom:1px solid var(--border); margin-bottom:14px; }
+  .brand span { color:var(--accent); }
+  .brand small { display:block; font-size:11px; color:var(--muted); font-weight:500; margin-top:2px; }
+  .nav-grp { font-size:10px; text-transform:uppercase; letter-spacing:.09em; color:#64748b; font-weight:700; padding:12px 10px 6px; }
+  .nav-btn { width:100%; text-align:left; background:transparent; color:var(--muted); border:none; padding:10px 12px; border-radius:9px; cursor:pointer; font-size:13px; font-weight:600; display:flex; align-items:center; gap:9px; transition:.15s; margin-bottom:3px; }
+  .nav-btn:hover { background:#1e293b88; color:var(--text); }
+  .nav-btn.active { background:linear-gradient(135deg,#0284c7,#2563eb); color:#fff; box-shadow:0 4px 14px rgba(37,99,235,.35); }
+  .side-foot { margin-top:auto; padding-top:14px; border-top:1px solid var(--border); font-size:11px; color:#64748b; text-align:center; }
+
+  /* MAIN */
+  .main { margin-left:245px; flex:1; padding:24px 28px; max-width:calc(100% - 245px); }
+  .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px; }
+  .topbar h2 { margin:0; font-size:20px; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  button, a.btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; text-decoration:none; transition:.15s; display:inline-flex; align-items:center; gap:6px; }
   button:hover, a.btn:hover { background:#334155; border-color:var(--accent); }
   button.primary { background:linear-gradient(135deg,#0284c7,#2563eb); border:none; color:#fff; }
+  button.primary:hover { filter:brightness(1.1); }
   button.success { background:#065f46; border-color:#10b981; color:#ecfdf5; }
   button.purple { background:#581c87; border-color:#a855f7; color:#faf5ff; }
-  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:13px; margin-bottom:18px; }
+  button.sm { padding:5px 10px; font-size:12px; }
+
+  .view { display:none; animation:fade .18s ease; }
+  .view.active { display:block; }
+  @keyframes fade { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:13px; margin-bottom:18px; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
   .kpi .lbl { font-size:11px; text-transform:uppercase; color:var(--muted); letter-spacing:.06em; }
-  .kpi .num { font-size:26px; font-weight:800; margin-top:6px; }
+  .kpi .num { font-size:25px; font-weight:800; margin-top:6px; }
   .green { color:var(--green); } .cyan { color:var(--accent); } .amber { color:var(--amber); } .purple { color:var(--purple); }
+
   .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
-  input, select, textarea { background:#090f1d; color:var(--text); border:1px solid #334155; padding:9px 11px; border-radius:8px; font-size:13px; font-family:inherit; }
-  textarea { width:100%; min-height:95px; resize:vertical; }
+  input, select, textarea { background:#080d19; color:var(--text); border:1px solid #334155; padding:9px 11px; border-radius:8px; font-size:13px; font-family:inherit; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
+  textarea { width:100%; min-height:92px; resize:vertical; }
+
   .table-box { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:auto; }
-  table { width:100%; border-collapse:collapse; min-width:1040px; }
+  table { width:100%; border-collapse:collapse; min-width:980px; }
   th, td { padding:11px 13px; border-bottom:1px solid var(--border); text-align:left; font-size:13px; vertical-align:middle; }
   th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; background:#0b1220; }
   tr:hover { background:#131d31; }
   .score { display:inline-block; padding:3px 8px; border-radius:6px; font-weight:700; font-size:12px; }
   .s-hi { background:#14532d; color:#86efac; } .s-mid { background:#1e3a8a; color:#93c5fd; }
-  .pill { display:inline-block; font-size:11px; padding:2px 7px; border-radius:999px; background:#3b0764; color:#e9d5ff; margin-left:6px; font-weight:700; }
+  .pill { display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:999px; background:#3b0764; color:#e9d5ff; margin-left:6px; font-weight:700; }
   a.title-link { color:#e2e8f0; text-decoration:none; font-weight:600; }
   a.title-link:hover { color:var(--accent); text-decoration:underline; }
-  .meta { font-size:11px; color:var(--muted); margin-top:3px; }
-  .usd-in { width:76px; }
-  .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; }
-  .panel-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; }
-  .panel-card h3 { margin:0 0 12px 0; font-size:15px; color:var(--accent); }
-  .bar-row { margin-bottom:10px; }
+  .meta { font-size:11.5px; color:var(--muted); margin-top:3px; }
+  .usd-in { width:74px; }
+
+  .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:16px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; }
+  .card h3 { margin:0 0 12px 0; font-size:15px; color:var(--accent); }
+  .field { margin-bottom:12px; }
+  .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; font-weight:600; }
+  .field input, .field select { width:100%; }
+  .prebox { background:#060911; border:1px solid #334155; border-radius:8px; padding:12px; white-space:pre-wrap; font-size:12.5px; line-height:1.5; max-height:240px; overflow:auto; }
+
+  .bar-row { margin-bottom:11px; }
   .bar-lbl { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; }
   .bar-track { height:9px; background:#1e293b; border-radius:999px; overflow:hidden; }
   .bar-fill { height:100%; background:linear-gradient(90deg,#0284c7,#38bdf8); border-radius:999px; }
   .bar-fill.g { background:linear-gradient(90deg,#16a34a,#4ade80); }
-  .prebox { background:#070b14; border:1px solid #334155; border-radius:8px; padding:12px; white-space:pre-wrap; font-size:12.5px; line-height:1.5; max-height:260px; overflow:auto; }
-  .field { margin-bottom:12px; }
-  .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
-  .field input, .field select { width:100%; }
-  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.72); display:none; align-items:center; justify-content:center; padding:20px; z-index:99; }
+
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.75); display:none; align-items:center; justify-content:center; padding:20px; z-index:99; }
   .modal-bg.open { display:flex; }
   .modal { background:var(--card); border:1px solid #334155; border-radius:14px; max-width:820px; width:100%; max-height:88vh; overflow:auto; padding:24px; }
+
+  .toast { position:fixed; bottom:22px; right:22px; background:#0f172a; border:1px solid var(--accent); color:#fff; padding:11px 16px; border-radius:10px; font-size:13px; font-weight:600; box-shadow:0 10px 30px rgba(0,0,0,.5); opacity:0; transform:translateY(12px); pointer-events:none; transition:.2s; z-index:120; }
+  .toast.show { opacity:1; transform:none; }
   .status-bar { font-size:12px; color:var(--amber); margin-left:auto; }
+  @media (max-width:860px) { .side { position:static; width:100%; height:auto; } body { flex-direction:column; } .main { margin-left:0; max-width:100%; padding:16px; } }
 </style>
 </head>
 <body>
-<div class="shell">
-  <header>
-    <div>
-      <h1>⚡ ZeroTouch <span>PRIME v10.0</span> — Freelance OS</h1>
-      <div class="meta">Radar 16 Fuentes • CRM + Analytics • Laboratorio IA • Facturas PDF • Config</div>
-    </div>
-    <div class="actions">
-      <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear 16 Fuentes</button>
-      <button onclick="cargarDatos()">🔄 Refrescar</button>
-      <a class="btn" href="/api/export">📥 Excel (.CSV)</a>
-    </div>
-  </header>
+  <aside class="side">
+    <div class="brand">⚡ ZeroTouch <span>PRIME</span><small>v10.5 Unified Freelance OS</small></div>
+    <div class="nav-grp">Operacion</div>
+    <button class="nav-btn active" onclick="verTab('t_crm','📡 Radar & CRM',this)">📡 Radar & CRM</button>
+    <button class="nav-btn" onclick="verTab('t_stats','📊 Analytics',this)">📊 Analytics</button>
+    <div class="nav-grp">Estudio IA</div>
+    <button class="nav-btn" onclick="verTab('t_ai','🧠 Copiloto & Negociador',this)">🧠 Copiloto & Negociador</button>
+    <div class="nav-grp">Negocio</div>
+    <button class="nav-btn" onclick="verTab('t_mkt','🧲 Marketing & Iman',this)">🧲 Marketing & Iman</button>
+    <button class="nav-btn" onclick="verTab('t_whop','📦 Whop & Facturas',this)">📦 Whop & Facturas</button>
+    <div class="nav-grp">Sistema</div>
+    <button class="nav-btn" onclick="verTab('t_cfg','⚙️ Ajustes & Salud',this)">⚙️ Ajustes & Salud</button>
+    <div class="side-foot">100% Local • SQLite WAL</div>
+  </aside>
 
-  <div class="tabs">
-    <button class="tab active" onclick="verTab('t_crm', this)">📡 Radar & CRM</button>
-    <button class="tab" onclick="verTab('t_stats', this)">📊 Analytics</button>
-    <button class="tab" onclick="verTab('t_ai', this)">🧠 Laboratorio IA</button>
-    <button class="tab" onclick="verTab('t_inv', this)">📄 Facturas + Contrato</button>
-    <button class="tab" onclick="verTab('t_cfg', this)">⚙️ Configuracion</button>
-  </div>
-
-  <!-- TAB 1: CRM -->
-  <section id="t_crm" class="view active">
-    <div class="kpis">
-      <div class="kpi"><div class="lbl">Facturado Total</div><div class="num green" id="kUsd">$0.00</div></div>
-      <div class="kpi"><div class="lbl">Leads Capturados</div><div class="num cyan" id="kLeads">0</div></div>
-      <div class="kpi"><div class="lbl">Clientes Ganados</div><div class="num green" id="kGanados">0</div></div>
-      <div class="kpi"><div class="lbl">Basura 0-Tokens</div><div class="num amber" id="kAhorro">0</div></div>
-      <div class="kpi"><div class="lbl">Tokens Ahorrados</div><div class="num purple" id="kTok">0</div></div>
-    </div>
-
-    <div class="toolbar">
-      <input type="text" id="qSearch" placeholder="Buscar titulo, subreddit o categoria..." oninput="renderTabla()" style="min-width:250px;">
-      <select id="qEstado" onchange="renderTabla()">
-        <option value="">Todos los estados</option>
-        <option value="nuevo">Nuevo</option>
-        <option value="contactado">Contactado</option>
-        <option value="negociando">Negociando</option>
-        <option value="ganado">Ganado</option>
-        <option value="descartado">Descartado</option>
-      </select>
-      <select id="qMinScore" onchange="renderTabla()">
-        <option value="0">Cualquier Score</option>
-        <option value="7">Score 7+</option>
-        <option value="8">Score 8+ (Top)</option>
-      </select>
-      <div class="status-bar" id="scanStatus"></div>
-    </div>
-
-    <div class="table-box">
-      <table>
-        <thead>
-          <tr><th>ID</th><th>Score</th><th>Fuente</th><th>Proyecto, Competencia & Cliente</th><th>Presupuesto</th><th>Estado</th><th>USD</th><th>Acciones</th></tr>
-        </thead>
-        <tbody id="tbodyLeads"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- TAB 2: ANALYTICS -->
-  <section id="t_stats" class="view">
-    <div class="grid-2">
-      <div class="panel-card"><h3>📍 Top Fuentes (Leads Detectados)</h3><div id="chFuentes"></div></div>
-      <div class="panel-card"><h3>🎯 Embudo de Conversion CRM</h3><div id="chEmbudo"></div></div>
-      <div class="panel-card"><h3>💵 Ingresos por Categoria (USD)</h3><div id="chCat"></div></div>
-      <div class="panel-card"><h3>⚡ Eficiencia de Tokens IA</h3><div id="chTokens"></div></div>
-    </div>
-  </section>
-
-  <!-- TAB 3: LABORATORIO IA -->
-  <section id="t_ai" class="view">
-    <div class="grid-2">
-      <div class="panel-card">
-        <h3>🤖 Copiloto Express (Link Reddit, #ID o Texto)</h3>
-        <div class="field"><textarea id="aiOferta" placeholder="Pega aqui un link de Reddit, escribe #4, o pega la descripcion del cliente..."></textarea></div>
-        <button class="primary" onclick="correrCopilotoWeb()">Generar Pitch A/B + Precios + Codigo</button>
-        <div id="aiResCopiloto" style="margin-top:14px;"></div>
-      </div>
-      <div class="panel-card">
-        <h3>⚔️ Negociador Mata-Objeciones</h3>
-        <div class="field"><label>Contexto y precio pedido</label><input id="negCtx" placeholder="Ej. Scraper Shopify, pedi $120 USD"></div>
-        <div class="field"><label>Que te respondio el cliente?</label><textarea id="negMsg" placeholder="Ej. Can you do it for $40 or build a free sample first?"></textarea></div>
-        <button class="purple" onclick="correrNegociadorWeb()">Generar Contraofertas</button>
-        <div id="aiResNeg" style="margin-top:14px;"></div>
+  <main class="main">
+    <div class="topbar">
+      <h2 id="pageTitle">📡 Radar & CRM</h2>
+      <div class="actions">
+        <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear 16 Fuentes</button>
+        <button onclick="cargarDatos()">🔄 Refrescar</button>
+        <a class="btn" href="/api/export">📥 Excel (.CSV)</a>
       </div>
     </div>
-  </section>
 
-  <!-- TAB 4: FACTURAS -->
-  <section id="t_inv" class="view">
-    <div class="panel-card" style="max-width:640px;">
-      <h3>📄 Generador Instantaneo de Factura + Micro-Contrato PDF</h3>
-      <div class="field"><label>Cliente / Usuario</label><input id="invCli" placeholder="u/john_founder"></div>
-      <div class="field"><label>Concepto del proyecto</label><input id="invProj" placeholder="Custom Python Shopify Scraper & CSV Pipeline"></div>
-      <div class="field"><label>Monto (USD)</label><input id="invUsd" type="number" value="120"></div>
-      <div class="field"><label>Modalidad</label>
-        <select id="invTipo">
-          <option value="50% Deposit (Project Start)">50% Adelanto (Inicio)</option>
-          <option value="Final Payment (Full Delivery)">100% Pago Final (Entrega)</option>
-          <option value="Monthly Retainer / Maintenance">Mensualidad / Mantenimiento</option>
+    <!-- 1. RADAR & CRM -->
+    <section id="t_crm" class="view active">
+      <div class="kpis">
+        <div class="kpi"><div class="lbl">Facturado Total</div><div class="num green" id="kUsd">$0.00</div></div>
+        <div class="kpi"><div class="lbl">Leads Capturados</div><div class="num cyan" id="kLeads">0</div></div>
+        <div class="kpi"><div class="lbl">Clientes Ganados</div><div class="num green" id="kGanados">0</div></div>
+        <div class="kpi"><div class="lbl">Basura 0-Tokens</div><div class="num amber" id="kAhorro">0</div></div>
+        <div class="kpi"><div class="lbl">Tokens Ahorrados</div><div class="num purple" id="kTok">0</div></div>
+      </div>
+
+      <div class="toolbar">
+        <input type="text" id="qSearch" placeholder="Buscar titulo, subreddit o categoria..." oninput="renderTabla()" style="min-width:250px;">
+        <select id="qEstado" onchange="renderTabla()">
+          <option value="">Todos los estados</option>
+          <option value="nuevo">Nuevo</option>
+          <option value="contactado">Contactado</option>
+          <option value="negociando">Negociando</option>
+          <option value="ganado">Ganado</option>
+          <option value="descartado">Descartado</option>
         </select>
+        <select id="qMinScore" onchange="renderTabla()">
+          <option value="0">Cualquier Score</option>
+          <option value="7">Score 7+</option>
+          <option value="8">Score 8+ (Top)</option>
+        </select>
+        <div class="status-bar" id="scanStatus"></div>
       </div>
-      <button class="success" onclick="generarFacturaWeb()">Abrir Factura Lista para PDF</button>
-    </div>
-  </section>
 
-  <!-- TAB 5: CONFIG -->
-  <section id="t_cfg" class="view">
-    <div class="panel-card" style="max-width:700px;">
-      <h3>⚙️ Configuracion Global (config.json)</h3>
-      <div class="field"><label>Marca / Nombre Freelance</label><input id="cMarca"></div>
-      <div class="field"><label>Especialidad Tecnica</label><input id="cEsp"></div>
-      <div class="field"><label>Metodos de Pago (Pitches)</label><input id="cPagos"></div>
-      <div class="field"><label>Detalle de Pago (Facturas)</label><input id="cPagosFac"></div>
-      <div class="field"><label>GitHub URL</label><input id="cGh"></div>
-      <div class="field"><label>Whop URL</label><input id="cWhop"></div>
-      <div class="grid-2" style="grid-template-columns:1fr 1fr 1fr;">
-        <div class="field"><label>Tarifa/Hora USD</label><input id="cTarifa" type="number"></div>
-        <div class="field"><label>Score Minimo</label><input id="cScore" type="number"></div>
-        <div class="field"><label>Sniper (seg)</label><input id="cSniper" type="number"></div>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Score</th><th>Fuente</th><th>Proyecto, Competencia & Cliente</th><th>Presupuesto</th><th>Estado</th><th>USD</th><th>Acciones</th></tr>
+          </thead>
+          <tbody id="tbodyLeads"></tbody>
+        </table>
       </div>
-      <div class="field"><label>Telegram Admin ID (para control remoto DM)</label><input id="cAdmin" placeholder="Opcional: tu ID numerico personal de Telegram"></div>
-      <button class="primary" onclick="guardarConfigWeb()">💾 Guardar Configuracion</button>
-      <span id="cfgMsg" style="margin-left:12px;font-size:13px;color:var(--green);"></span>
-    </div>
-  </section>
-</div>
+    </section>
 
-<!-- MODAL COPILOTO -->
-<div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()">
-  <div class="modal">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-      <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto PRIME</h3>
-      <button onclick="cerrarModal()">Cerrar</button>
+    <!-- 2. ANALYTICS -->
+    <section id="t_stats" class="view">
+      <div class="grid-2">
+        <div class="card"><h3>📍 Top Fuentes (Leads Detectados)</h3><div id="chFuentes"></div></div>
+        <div class="card"><h3>🎯 Embudo de Conversion CRM</h3><div id="chEmbudo"></div></div>
+        <div class="card"><h3>💵 Ingresos por Categoria (USD)</h3><div id="chCat"></div></div>
+        <div class="card"><h3>⚡ Eficiencia de Tokens IA</h3><div id="chTokens"></div></div>
+      </div>
+    </section>
+
+    <!-- 3. ESTUDIO IA -->
+    <section id="t_ai" class="view">
+      <div class="grid-2">
+        <div class="card">
+          <h3>🤖 Copiloto PRIME (Link Reddit, #ID o Texto)</h3>
+          <div class="field"><textarea id="aiOferta" placeholder="Pega un link de Reddit, escribe #4, o pega la descripcion del cliente..."></textarea></div>
+          <button class="primary" onclick="correrCopilotoWeb()">Generar Pitch A/B + Precios + Codigo</button>
+          <div id="aiResCopiloto" style="margin-top:14px;"></div>
+        </div>
+        <div class="card">
+          <h3>⚔️ Negociador Mata-Objeciones</h3>
+          <div class="field"><label>Contexto y precio pedido</label><input id="negCtx" placeholder="Ej. Scraper Shopify, pedi $120 USD"></div>
+          <div class="field"><label>Que te respondio el cliente?</label><textarea id="negMsg" placeholder="Ej. Can you do it for $40 or build a free sample first?"></textarea></div>
+          <button class="purple" onclick="correrNegociadorWeb()">Generar Contraofertas</button>
+          <div id="aiResNeg" style="margin-top:14px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. MARKETING -->
+    <section id="t_mkt" class="view">
+      <div class="grid-2">
+        <div class="card">
+          <h3>🧲 Generador de Posts [For Hire] / [Offer]</h3>
+          <div class="field"><label>Subreddit destino</label>
+            <select id="mktSub">
+              <option value="r/forhire">r/forhire (Tarifas altas $50+)</option>
+              <option value="r/slavelabour">r/slavelabour (Rapido $20-$80)</option>
+              <option value="r/DoneDirtCheap">r/DoneDirtCheap (Rapido $15-$60)</option>
+              <option value="r/Jobs4Bitcoins">r/Jobs4Bitcoins (Pagos USDT/Cripto)</option>
+              <option value="r/freelance_forhire">r/freelance_forhire</option>
+            </select>
+          </div>
+          <div class="field"><label>Enfoque (opcional, vacio usa tu config)</label><input id="mktEnf" placeholder="Python Scraping, Bots Telegram/Discord & Automation"></div>
+          <button class="primary" onclick="generarPostWeb()">Redactar Post Magnetico</button>
+          <div id="resMktPost" style="margin-top:14px;"></div>
+        </div>
+        <div class="card">
+          <h3>✨ Bios Profesionales (Reddit, GitHub, Whop)</h3>
+          <p class="meta" style="margin-bottom:14px;">Genera 3 bios optimizadas en ingles basadas en tu especialidad para dar confianza inmediata.</p>
+          <button class="purple" onclick="generarBiosWeb()">Generar 3 Bios Ahora</button>
+          <div id="resMktBios" style="margin-top:14px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. WHOP & FACTURAS -->
+    <section id="t_whop" class="view">
+      <div class="grid-2">
+        <div class="card">
+          <h3>📦 Fabrica 1-Click de Productos para Whop (.ZIP)</h3>
+          <div class="field"><label>Nombre comercial de tu herramienta</label><input id="whopNom" placeholder="Ej. AutoLead Scraper Pro"></div>
+          <div class="field"><label>Ruta del script (vacio usa borrador_cliente.py)</label><input id="whopRuta" placeholder="modulo_b_ejecutor/borrador_cliente.py"></div>
+          <button class="purple" onclick="empaquetarWhopWeb()">Empaquetar .ZIP + Copy + Guion Short</button>
+          <div id="resWhop" style="margin-top:14px;"></div>
+        </div>
+        <div class="card">
+          <h3>📄 Factura + Micro-Contrato PDF</h3>
+          <div class="field"><label>Cliente / Usuario</label><input id="invCli" placeholder="u/john_founder"></div>
+          <div class="field"><label>Concepto del proyecto</label><input id="invProj" placeholder="Custom Python Shopify Scraper & CSV Pipeline"></div>
+          <div class="field"><label>Monto (USD)</label><input id="invUsd" type="number" value="120"></div>
+          <div class="field"><label>Modalidad</label>
+            <select id="invTipo">
+              <option value="50% Deposit (Project Start)">50% Adelanto (Inicio)</option>
+              <option value="Final Payment (Full Delivery)">100% Pago Final (Entrega)</option>
+              <option value="Monthly Retainer / Maintenance">Mensualidad / Mantenimiento</option>
+            </select>
+          </div>
+          <button class="success" onclick="generarFacturaWeb()">Abrir Factura Lista para PDF</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. AJUSTES & SALUD -->
+    <section id="t_cfg" class="view">
+      <div class="grid-2">
+        <div class="card">
+          <h3>⚙️ Configuracion Global (config.json)</h3>
+          <div class="field"><label>Marca / Nombre Freelance</label><input id="cMarca"></div>
+          <div class="field"><label>Especialidad Tecnica</label><input id="cEsp"></div>
+          <div class="field"><label>Metodos de Pago (Pitches)</label><input id="cPagos"></div>
+          <div class="field"><label>Detalle de Pago (Facturas)</label><input id="cPagosFac"></div>
+          <div class="field"><label>GitHub URL</label><input id="cGh"></div>
+          <div class="field"><label>Whop URL</label><input id="cWhop"></div>
+          <div class="grid-2" style="grid-template-columns:1fr 1fr 1fr;gap:10px;">
+            <div class="field"><label>Tarifa/Hr USD</label><input id="cTarifa" type="number"></div>
+            <div class="field"><label>Score Min</label><input id="cScore" type="number"></div>
+            <div class="field"><label>Sniper (s)</label><input id="cSniper" type="number"></div>
+          </div>
+          <div class="field"><label>Telegram Admin ID (para control remoto DM)</label><input id="cAdmin" placeholder="Opcional: tu ID numerico personal"></div>
+          <button class="primary" onclick="guardarConfigWeb()">💾 Guardar Configuracion</button>
+        </div>
+        <div class="card">
+          <h3>🩺 Salud del Sistema & Respaldos</h3>
+          <p class="meta" style="margin-bottom:14px;">Verifica en tiempo real tus conexiones de Reddit, Telegram y Gemini, o crea un respaldo de tu base de datos SQLite.</p>
+          <div class="actions" style="margin-bottom:14px;">
+            <button class="primary" onclick="correrDiagWeb()">🩺 Probar Conexiones</button>
+            <button class="success" onclick="hacerBackupWeb()">💾 Backup Base de Datos</button>
+          </div>
+          <div id="resDiag" class="prebox">Haz clic en "Probar Conexiones" para revisar todo el sistema.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto PRIME</h3>
+        <button class="sm" onclick="cerrarModal()">Cerrar</button>
+      </div>
+      <div id="modalBody">Cargando...</div>
     </div>
-    <div id="modalBody">Cargando...</div>
   </div>
-</div>
+  <div id="toast" class="toast"></div>
 
 <script>
 let DATA = { leads:[], kpis:{}, analytics:{}, scan:{} };
+const CLIP_STORE = {};
+let CLIP_SEQ = 0;
+
 function esc(s){ return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function verTab(id, btn){
+function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 2400); }
+function regClip(txt){ const id = 'c' + (++CLIP_SEQ); CLIP_STORE[id] = String(txt || ''); return id; }
+function copyId(id){ navigator.clipboard.writeText(CLIP_STORE[id] || ''); toast('✅ Copiado al portapapeles'); }
+function cerrarModal(){ document.getElementById('modalBg').classList.remove('open'); }
+
+function verTab(id, title, btn){
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  document.getElementById('pageTitle').textContent = title;
   btn.classList.add('active');
   if(id === 't_cfg') cargarConfigWeb();
 }
-function copiarTxt(txt, btn){
-  navigator.clipboard.writeText(txt);
-  const old = btn.textContent; btn.textContent = '✅ Copiado!';
-  setTimeout(()=> btn.textContent = old, 1400);
-}
-function cerrarModal(){ document.getElementById('modalBg').classList.remove('open'); }
 
 async function cargarDatos(){
   const r = await fetch('/api/data');
@@ -252,7 +346,7 @@ async function cargarDatos(){
   document.getElementById('kTok').textContent = Number(DATA.kpis.tok_ahorrados || 0).toLocaleString();
   const st = document.getElementById('scanStatus');
   if(DATA.scan.running){ st.textContent = '⏳ Escaneando 16 fuentes en segundo plano...'; }
-  else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; st.textContent = `✅ Ultimo barrido: ${lr.alertas} alertas | ${lr.descartados} filtrados 0-tokens (${lr.segundos}s)`; }
+  else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; st.textContent = `✅ Ultimo barrido: ${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
   renderTabla();
   renderAnalytics();
 }
@@ -282,8 +376,8 @@ function renderTabla(){
       </td>
       <td><input class="usd-in" type="number" step="1" id="usd_${l.id}" value="${l.ganancia_usd || 0}"></td>
       <td style="white-space:nowrap;">
-        <button class="success" onclick="guardarLead(${l.id})">Guardar</button>
-        <button class="purple" onclick="abrirCopilotoLead(${l.id})">🤖 IA</button>
+        <button class="success sm" onclick="guardarLead(${l.id})">Guardar</button>
+        <button class="purple sm" onclick="abrirCopilotoLead(${l.id})">🤖 IA</button>
       </td>
     </tr>
   `).join('');
@@ -306,13 +400,12 @@ function renderAnalytics(){
   renderBarras('chFuentes', a.por_fuente || []);
   renderBarras('chEmbudo', a.embudo || [], 'g');
   renderBarras('chCat', a.usd_categoria || [], 'g');
-  const us = DATA.kpis.tok_usados || 0;
-  const ah = DATA.kpis.tok_ahorrados || 0;
+  const us = DATA.kpis.tok_usados || 0, ah = DATA.kpis.tok_ahorrados || 0;
   const pct = (us + ah) > 0 ? Math.round((ah / (us + ah)) * 100) : 0;
   document.getElementById('chTokens').innerHTML = `
-    <div class="bar-row"><div class="bar-lbl"><span>Tokens Ahorrados (Pre-filtro + Jaccard)</span><b>${ah.toLocaleString()} (${pct}%)</b></div>
+    <div class="bar-row"><div class="bar-lbl"><span>Tokens Ahorrados</span><b>${ah.toLocaleString()} (${pct}%)</b></div>
     <div class="bar-track"><div class="bar-fill g" style="width:${pct}%"></div></div></div>
-    <div class="bar-row"><div class="bar-lbl"><span>Tokens Usados en Analisis IA</span><b>${us.toLocaleString()}</b></div>
+    <div class="bar-row"><div class="bar-lbl"><span>Tokens Usados</span><b>${us.toLocaleString()}</b></div>
     <div class="bar-track"><div class="bar-fill" style="width:${100-pct}%"></div></div></div>
   `;
 }
@@ -321,34 +414,34 @@ async function guardarLead(id){
   const estado = document.getElementById('est_'+id).value;
   const usd = parseFloat(document.getElementById('usd_'+id).value || 0);
   await fetch('/api/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, estado, usd}) });
+  toast(`✅ Lead #${id} actualizado`);
   await cargarDatos();
 }
 
 async function lanzarEscaneo(){
   document.getElementById('scanStatus').textContent = '⏳ Iniciando escaneo PRIME...';
+  toast('🚀 Escaneo de 16 fuentes iniciado');
   await fetch('/api/scan', { method:'POST' });
   setTimeout(cargarDatos, 2000);
 }
 
 function renderBloqueCopiloto(res){
   if(!res || res.error) return `<div style="color:var(--red);">Error: ${esc(res ? res.error : 'Sin respuesta')}</div>`;
-  const pa = JSON.stringify(res.pitch_a || '');
-  const pb = JSON.stringify(res.pitch_b || '');
-  const mc = JSON.stringify(res.micro_contrato || '');
+  const idA = regClip(res.pitch_a), idB = regClip(res.pitch_b), idC = regClip(res.micro_contrato);
   return `
     ${res.confianza ? `<div class="meta" style="margin-bottom:8px;color:var(--purple);font-weight:700;">${esc(res.confianza)}</div>` : ''}
     <div class="field"><label>Diagnostico</label><div class="prebox">${esc(res.diagnostico)}</div></div>
     <div class="field"><label>Precios Sugeridos</label><div class="prebox">${esc(res.precios)}</div></div>
-    <div class="field"><label>Pitch A (Tecnico) <button style="padding:3px 8px;font-size:11px;margin-left:6px;" onclick='copiarTxt(${pa}, this)'>Copiar</button> ${res.dm_url ? `<a class="btn" style="padding:3px 8px;font-size:11px;margin-left:4px;" href="${esc(res.dm_url)}" target="_blank">⚡ DM Reddit</a>` : ''}</label><div class="prebox">${esc(res.pitch_a)}</div></div>
-    <div class="field"><label>Pitch B (Consultivo) <button style="padding:3px 8px;font-size:11px;margin-left:6px;" onclick='copiarTxt(${pb}, this)'>Copiar</button></label><div class="prebox">${esc(res.pitch_b)}</div></div>
-    <div class="field"><label>Micro-Contrato <button style="padding:3px 8px;font-size:11px;margin-left:6px;" onclick='copiarTxt(${mc}, this)'>Copiar</button></label><div class="prebox">${esc(res.micro_contrato)}</div></div>
-    <div class="meta">✅ Script base guardado y verificado con AST en modulo_b_ejecutor/borrador_cliente.py</div>
+    <div class="field"><label>Pitch A (Tecnico) <button class="sm" onclick="copyId('${idA}')">Copiar</button> ${res.dm_url ? `<a class="btn sm" href="${esc(res.dm_url)}" target="_blank">⚡ DM Reddit</a>` : ''}</label><div class="prebox">${esc(res.pitch_a)}</div></div>
+    <div class="field"><label>Pitch B (Consultivo) <button class="sm" onclick="copyId('${idB}')">Copiar</button></label><div class="prebox">${esc(res.pitch_b)}</div></div>
+    <div class="field"><label>Micro-Contrato <button class="sm" onclick="copyId('${idC}')">Copiar</button></label><div class="prebox">${esc(res.micro_contrato)}</div></div>
+    <div class="meta">✅ Script base verificado con AST en modulo_b_ejecutor/borrador_cliente.py</div>
   `;
 }
 
 async function abrirCopilotoLead(id){
   document.getElementById('modalTitle').textContent = '🤖 Copiloto PRIME — Lead #' + id;
-  document.getElementById('modalBody').innerHTML = '⏳ Analizando post y generando Pitch A/B + Codigo Python...';
+  document.getElementById('modalBody').innerHTML = '⏳ Analizando post y generando Pitch A/B + Codigo...';
   document.getElementById('modalBg').classList.add('open');
   const r = await fetch('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada: '#' + id}) });
   document.getElementById('modalBody').innerHTML = renderBloqueCopiloto(await r.json());
@@ -356,7 +449,7 @@ async function abrirCopilotoLead(id){
 
 async function correrCopilotoWeb(){
   const entrada = document.getElementById('aiOferta').value.trim();
-  if(!entrada) return;
+  if(!entrada) return toast('⚠️ Pega un link, #ID o texto primero');
   document.getElementById('aiResCopiloto').innerHTML = '⏳ Generando estrategia, pitches y script...';
   const r = await fetch('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada}) });
   document.getElementById('aiResCopiloto').innerHTML = renderBloqueCopiloto(await r.json());
@@ -365,18 +458,59 @@ async function correrCopilotoWeb(){
 async function correrNegociadorWeb(){
   const ctx = document.getElementById('negCtx').value.trim();
   const msg = document.getElementById('negMsg').value.trim();
-  if(!msg) return;
+  if(!msg) return toast('⚠️ Escribe lo que te dijo el cliente');
   document.getElementById('aiResNeg').innerHTML = '⏳ Calculando contraofertas...';
   const r = await fetch('/api/negociar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ctx, msg}) });
   const d = await r.json();
   if(d.error){ document.getElementById('aiResNeg').innerHTML = esc(d.error); return; }
-  const f = JSON.stringify(d.firme || '');
-  const fl = JSON.stringify(d.flexible || '');
+  const idF = regClip(d.firme), idFl = regClip(d.flexible);
   document.getElementById('aiResNeg').innerHTML = `
     <div class="field"><label>Lectura Tactica</label><div class="prebox">${esc(d.consejo)}</div></div>
-    <div class="field"><label>Respuesta Firme <button style="padding:3px 8px;font-size:11px;margin-left:6px;" onclick='copiarTxt(${f}, this)'>Copiar</button></label><div class="prebox">${esc(d.firme)}</div></div>
-    <div class="field"><label>Respuesta Flexible <button style="padding:3px 8px;font-size:11px;margin-left:6px;" onclick='copiarTxt(${fl}, this)'>Copiar</button></label><div class="prebox">${esc(d.flexible)}</div></div>
+    <div class="field"><label>Respuesta Firme <button class="sm" onclick="copyId('${idF}')">Copiar</button></label><div class="prebox">${esc(d.firme)}</div></div>
+    <div class="field"><label>Respuesta Flexible <button class="sm" onclick="copyId('${idFl}')">Copiar</button></label><div class="prebox">${esc(d.flexible)}</div></div>
   `;
+}
+
+async function generarPostWeb(){
+  const sub = document.getElementById('mktSub').value;
+  const enfoque = document.getElementById('mktEnf').value.trim();
+  document.getElementById('resMktPost').innerHTML = '⏳ Redactando post magnetico...';
+  const r = await fetch('/api/mkt_post', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sub, enfoque}) });
+  const d = await r.json();
+  if(d.error){ document.getElementById('resMktPost').innerHTML = esc(d.error); return; }
+  const idT = regClip(d.titulo), idC = regClip(d.cuerpo);
+  document.getElementById('resMktPost').innerHTML = `
+    <div class="field"><label>Titulo <button class="sm" onclick="copyId('${idT}')">Copiar</button></label><div class="prebox">${esc(d.titulo)}</div></div>
+    <div class="field"><label>Cuerpo Markdown <button class="sm" onclick="copyId('${idC}')">Copiar</button></label><div class="prebox">${esc(d.cuerpo)}</div></div>
+  `;
+}
+
+async function generarBiosWeb(){
+  document.getElementById('resMktBios').innerHTML = '⏳ Generando bios...';
+  const r = await fetch('/api/mkt_bios', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+  const d = await r.json();
+  if(d.error){ document.getElementById('resMktBios').innerHTML = esc(d.error); return; }
+  const idR = regClip(d.reddit), idG = regClip(d.github), idW = regClip(d.whop);
+  document.getElementById('resMktBios').innerHTML = `
+    <div class="field"><label>Reddit Bio <button class="sm" onclick="copyId('${idR}')">Copiar</button></label><div class="prebox">${esc(d.reddit)}</div></div>
+    <div class="field"><label>GitHub Bio <button class="sm" onclick="copyId('${idG}')">Copiar</button></label><div class="prebox">${esc(d.github)}</div></div>
+    <div class="field"><label>Whop Bio <button class="sm" onclick="copyId('${idW}')">Copiar</button></label><div class="prebox">${esc(d.whop)}</div></div>
+  `;
+}
+
+async function empaquetarWhopWeb(){
+  const nombre = document.getElementById('whopNom').value.trim() || 'ZeroTouch Automation Tool';
+  const ruta = document.getElementById('whopRuta').value.trim();
+  document.getElementById('resWhop').innerHTML = '⏳ Refactorizando codigo y armando .ZIP comercial...';
+  const r = await fetch('/api/whop_pack', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nombre, ruta}) });
+  const d = await r.json();
+  if(d.error){ document.getElementById('resWhop').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
+  const idW = regClip(d.whop_copy);
+  document.getElementById('resWhop').innerHTML = `
+    <div class="meta" style="color:var(--green);margin-bottom:8px;">✅ ZIP listo en: ${esc(d.zip_path)}</div>
+    <div class="field"><label>Copy de Ventas Whop <button class="sm" onclick="copyId('${idW}')">Copiar</button></label><div class="prebox">${esc(d.whop_copy)}</div></div>
+  `;
+  toast('📦 Paquete Whop generado');
 }
 
 async function generarFacturaWeb(){
@@ -421,8 +555,20 @@ async function guardarConfigWeb(){
     telegram_admin_id: document.getElementById('cAdmin').value.trim()
   };
   await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-  document.getElementById('cfgMsg').textContent = '✅ Guardado!';
-  setTimeout(()=> document.getElementById('cfgMsg').textContent = '', 2000);
+  toast('💾 Configuracion guardada');
+}
+
+async function correrDiagWeb(){
+  document.getElementById('resDiag').textContent = '⏳ Probando Reddit, Telegram y Gemini...';
+  const r = await fetch('/api/diagnostico');
+  const d = await r.json();
+  document.getElementById('resDiag').textContent = d.reporte;
+}
+
+async function hacerBackupWeb(){
+  const r = await fetch('/api/backup', { method:'POST' });
+  const d = await r.json();
+  toast(d.path ? '💾 Backup creado en backups/' : '⚠️ No hay DB todavia');
 }
 
 cargarDatos();
@@ -467,6 +613,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html; charset=utf-8", HTML_DASHBOARD.encode("utf-8"))
         elif self.path == "/api/config":
             self._send(200, "application/json; charset=utf-8", json.dumps(cargar_config()).encode("utf-8"))
+        elif self.path == "/api/diagnostico":
+            key = os.getenv("GEMINI_API_KEY_FREE")
+            tg_tok = os.getenv("TELEGRAM_TOKEN")
+            tg_id = os.getenv("TELEGRAM_CHAT_ID")
+            lineas = [
+                f"1. Archivo .env      : {'OK' if os.path.exists(os.path.join(ROOT_DIR, '.env')) else 'FALTA'}",
+                f"2. config.json       : {'OK' if os.path.exists(os.path.join(ROOT_DIR, 'config.json')) else 'Default'}",
+                f"3. TELEGRAM_CHAT_ID  : {tg_id or 'FALTA'}",
+            ]
+            if tg_tok:
+                try:
+                    rt = SESSION.get(f"https://api.telegram.org/bot{tg_tok}/getMe", timeout=6)
+                    lineas.append(f"4. Telegram API      : {'OK (@' + rt.json()['result']['username'] + ')' if rt.status_code == 200 else 'Error ' + str(rt.status_code)}")
+                except Exception as e:
+                    lineas.append(f"4. Telegram API      : Error ({e})")
+            try:
+                rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v10.5"}, timeout=6)
+                lineas.append(f"5. Reddit API        : {'OK (JSON en vivo)' if rr.status_code == 200 else 'Fallback XML Nativo (HTTP ' + str(rr.status_code) + ')'}")
+            except Exception as e:
+                lineas.append(f"5. Reddit API        : Error ({e})")
+            resp = generar_texto_ia("Responde solo OK", temperatura=0.0, timeout=10) if key else None
+            lineas.append(f"6. Gemini API        : {'OK' if resp else 'SIN RESPUESTA'}")
+            self._send(200, "application/json; charset=utf-8", json.dumps({"reporte": "\n".join(lineas)}).encode("utf-8"))
         elif self.path == "/api/data":
             conn = preparar_db()
             try:
@@ -534,6 +703,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/scan":
             threading.Thread(target=correr_scan_bg, daemon=True).start()
             self._send(200, "application/json", b'{"started": true}')
+        elif self.path == "/api/backup":
+            dst = crear_backup_rotativo()
+            self._send(200, "application/json", json.dumps({"path": dst}).encode("utf-8"))
         elif self.path == "/api/config":
             cfg = cargar_config()
             cfg.update(data)
@@ -556,6 +728,61 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/negociar":
             res = responder_objecion_ia(str(data.get("ctx", "")), str(data.get("msg", "")))
             self._send(200, "application/json; charset=utf-8", json.dumps(res or {"error": "IA no respondio"}).encode("utf-8"))
+        elif self.path == "/api/mkt_post":
+            cfg = cargar_config()
+            sub = str(data.get("sub", "r/forhire"))
+            enf = str(data.get("enfoque", "")).strip() or cfg.get("especialidad")
+            prompt = (
+                f"Crea una publicacion persuasiva en ingles para {sub} que atraiga clientes freelance.\n"
+                f"Especialidad: {enf}\nPagos: {cfg.get('metodos_pago')}\nGitHub: {cfg.get('github_url')}\n"
+                "Responde UNICAMENTE con <TITULO>...</TITULO> y <CUERPO>...</CUERPO>."
+            )
+            txt = generar_texto_ia(prompt, temperatura=0.4)
+            out = {"titulo": extraer_etiqueta(txt, "TITULO"), "cuerpo": extraer_etiqueta(txt, "CUERPO")} if txt else {"error": "IA no respondio"}
+            self._send(200, "application/json; charset=utf-8", json.dumps(out).encode("utf-8"))
+        elif self.path == "/api/mkt_bios":
+            cfg = cargar_config()
+            prompt = (
+                f"Crea 3 bios profesionales en ingles para un dev freelance ({cfg.get('especialidad')}).\n"
+                "Responde UNICAMENTE con <REDDIT_BIO>...</REDDIT_BIO>, <GITHUB_BIO>...</GITHUB_BIO> y <WHOP_BIO>...</WHOP_BIO>."
+            )
+            txt = generar_texto_ia(prompt, temperatura=0.4)
+            out = {"reddit": extraer_etiqueta(txt, "REDDIT_BIO"), "github": extraer_etiqueta(txt, "GITHUB_BIO"), "whop": extraer_etiqueta(txt, "WHOP_BIO")} if txt else {"error": "IA no respondio"}
+            self._send(200, "application/json; charset=utf-8", json.dumps(out).encode("utf-8"))
+        elif self.path == "/api/whop_pack":
+            nombre = str(data.get("nombre", "ZeroTouch Tool")).strip()
+            ruta = str(data.get("ruta", "")).strip() or os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
+            if not os.path.exists(ruta):
+                self._send(200, "application/json", json.dumps({"error": f"No existe el archivo: {ruta}"}).encode("utf-8"))
+                return
+            with open(ruta, "r", encoding="utf-8") as f:
+                cod_raw = f.read()
+            prompt = (
+                f"Convierte este script en producto comercial Whop llamado '{nombre}'.\n"
+                "Responde UNICAMENTE con <CODIGO_LIMPIO>, <README>, <WHOP_COPY> y <GUION_SHORT>.\n\n"
+                f"SCRIPT:\n{cod_raw}"
+            )
+            txt = generar_texto_ia(prompt, temperatura=0.25, timeout=32)
+            if not txt:
+                self._send(200, "application/json", json.dumps({"error": "IA no respondio"}).encode("utf-8"))
+                return
+            cod, _ = validar_y_reparar_python(extraer_etiqueta(txt, "CODIGO_LIMPIO"), descripcion=nombre)
+            readme = limpiar_bloque_codigo(extraer_etiqueta(txt, "README"))
+            whop = extraer_etiqueta(txt, "WHOP_COPY")
+            guion = extraer_etiqueta(txt, "GUION_SHORT")
+            todos_pip, _ = analizar_dependencias(cod)
+            carp = os.path.join(ROOT_DIR, "modulo_c_whop", "producto_listo")
+            os.makedirs(carp, exist_ok=True)
+            slug = re.sub(r"[^a-zA-Z0-9]+", "_", nombre.lower()).strip("_") or "producto"
+            launcher = "@echo off\r\npython -m pip install -r requirements.txt\r\npython main.py\r\npause\r\n"
+            for fn, ct in [("main.py", cod), ("README.md", readme), ("requirements.txt", ("\n".join(todos_pip) or "# stdlib") + "\n"), ("RUN_WINDOWS.bat", launcher), ("WHOP_LISTING.md", whop), ("GUION_SHORT.txt", guion)]:
+                with open(os.path.join(carp, fn), "w", encoding="utf-8") as f:
+                    f.write(ct)
+            zpath = os.path.join(carp, f"{slug}_whop_prime.zip")
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fn in ("main.py", "README.md", "requirements.txt", "RUN_WINDOWS.bat"):
+                    zf.write(os.path.join(carp, fn), arcname=fn)
+            self._send(200, "application/json; charset=utf-8", json.dumps({"zip_path": zpath, "whop_copy": whop}).encode("utf-8"))
         elif self.path == "/api/factura":
             _, html_doc = crear_factura_html(
                 str(data.get("cliente", "Client")),
@@ -568,12 +795,20 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, "text/plain", b"Not Found")
 
+def puerto_en_uso(puerto: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", puerto)) == 0
+
 def main() -> None:
     puerto = 8765
-    server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
     url = f"http://127.0.0.1:{puerto}"
-    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH PRIME v10.0 WEB OS: {url} ==={C.RESET}")
-    print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras cerrar el servidor.{C.RESET}\n")
+    if puerto_en_uso(puerto):
+        print(f"{C.GREEN}[+] El Dashboard Web ya estaba corriendo. Abriendo {url}...{C.RESET}")
+        webbrowser.open(url)
+        return
+    server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
+    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH PRIME v10.5 WEB OS: {url} ==={C.RESET}")
+    print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
     webbrowser.open(url)
     try:
         server.serve_forever()
