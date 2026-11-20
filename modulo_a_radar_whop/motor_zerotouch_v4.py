@@ -24,6 +24,7 @@ from core_ia import (
     extraer_score,
     extraer_presupuesto_usd,
     log_evento,
+    cargar_env,
     cargar_config,
     preparar_db,
     registrar_metricas,
@@ -55,7 +56,7 @@ _REDDIT_LOCK = threading.Lock()
 _REDDIT_DIRECTO_403 = False
 _OAUTH_TOKEN: str | None = None
 _OAUTH_EXPIRA: float = 0.0
-OAUTH_UA = "windows:zerotouch-radar:v12.8 (by /u/zerotouch_freelance)"
+OAUTH_UA = "windows:zerotouch-radar:v12.9 (by /u/zerotouch_freelance)"
 
 def obtener_headers_reddit_oauth() -> dict | None:
     global _OAUTH_TOKEN, _OAUTH_EXPIRA
@@ -75,6 +76,9 @@ def obtener_headers_reddit_oauth() -> dict | None:
                 headers={"User-Agent": OAUTH_UA},
                 timeout=10,
             )
+            global _OAUTH_LAST_ERR
+            if r.status_code != 200:
+                _OAUTH_LAST_ERR = f"HTTP {r.status_code}"
             if r.status_code == 200:
                 tok = r.json().get("access_token")
                 if tok:
@@ -348,7 +352,7 @@ def procesar_child_reddit(
         sub = fuente_forzada.replace("r/", "")
 
     perm = d.get("permalink") or ""
-    link = f"https://www.reddit.com{perm}" if perm.startswith("/") else (d.get("full_link") or d.get("url") or "")
+    link = f"https://www.reddit.com{perm}" if perm.startswith("/") else (d.get("full_link") or (f"https://www.reddit.com/r/{sub}/comments/{d.get('id', '')}/" if sub and d.get("id") else (d.get("url") or "")))
 
     return _evaluar_post_reddit_comun(
         post_id=d.get("name") or d.get("id") or link,
@@ -439,6 +443,51 @@ def marcar_reddit_403() -> None:
 def reddit_directo_disponible() -> bool:
     with _REDDIT_LOCK:
         return not _REDDIT_DIRECTO_403
+
+ARCTIC_LOCK = threading.Lock()
+_OAUTH_LAST_ERR = ""
+
+def consultar_arctic_shift(params: dict) -> list | None:
+    with ARCTIC_LOCK:
+        time.sleep(0.12)
+        try:
+            r = SESSION.get(
+                "https://arctic-shift.photon-reddit.com/api/posts/search",
+                params=params,
+                headers={"User-Agent": REDDIT_HEADERS["User-Agent"], "Accept": "application/json"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json().get("data")
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return None
+
+def diagnosticar_reddit_real() -> str:
+    cargar_env(override=True)
+    cid = (os.getenv("REDDIT_CLIENT_ID") or "").strip()
+    csec = (os.getenv("REDDIT_CLIENT_SECRET") or "").strip()
+    if cid and csec:
+        h_oa = obtener_headers_reddit_oauth()
+        if h_oa:
+            try:
+                ro = SESSION.get("https://oauth.reddit.com/r/forhire/new?limit=1", headers=h_oa, timeout=6)
+                if ro.status_code == 200:
+                    return "OK (OAuth2 Oficial en vivo)"
+                return f"OAuth2 fallo HTTP {ro.status_code} (revisa ID/Secret en .env)"
+            except Exception as e:
+                return f"Error OAuth2 ({e})"
+        return f"Llaves en .env rechazadas por Reddit ({_OAUTH_LAST_ERR or 'revisa ID/Secret'})"
+
+    if consultar_arctic_shift({"subreddit": "forhire", "limit": 1, "sort": "desc"}) is not None:
+        return "OK via Arctic Shift (Sin 403 | tiempo real, no requiere llaves)"
+    if consultar_pullpush({"subreddit": "forhire", "size": 1}) is not None:
+        return "OK via PullPush (Respaldo activo)"
+    if consultar_rss2json_seguro("https://www.reddit.com/r/forhire/new/.rss") is not None:
+        return "OK via RSS-Bridge (Respaldo activo)"
+    return "Sin conexion a Reddit ni espejos (revisa tu internet/firewall)"
 
 def consultar_pullpush(params: dict) -> list | None:
     with PULLPUSH_LOCK:
@@ -537,14 +586,19 @@ def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tu
         except Exception:
             pass
 
-    # Nivel 3: PullPush individual por subreddit (rapido y sin 403; ventana flexible por posible lag de indice)
-    max_h_pp = max(36, safe_int(cfg.get("max_horas_post", 12), 12))
+    # Nivel 3: Arctic Shift + PullPush por subreddit (sin 403 y en tiempo real)
+    max_h_pp = max(24, safe_int(cfg.get("max_horas_post", 12), 12))
     bruto_tot = 0
     ok_subs = 0
     subs_fallidos = []
+    fuente_usada = "ArcticShift"
 
     for sub in subs:
-        raw_list = consultar_pullpush({"subreddit": sub, "size": 15, "sort": "desc", "sort_type": "created_utc"})
+        raw_list = consultar_arctic_shift({"subreddit": sub, "limit": 15, "sort": "desc"})
+        if raw_list is None:
+            raw_list = consultar_pullpush({"subreddit": sub, "size": 15, "sort": "desc", "sort_type": "created_utc"})
+            if raw_list is not None:
+                fuente_usada = "PullPush"
         if raw_list is not None:
             ok_subs += 1
             bruto_tot += len(raw_list)
@@ -580,7 +634,7 @@ def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tu
                     items.append(it)
 
     tech_n = sum(1 for x in items if x["es_tech"])
-    modo_txt = f"PullPush {ok_subs}/{len(subs)} ({bruto_tot} raw)" if ok_subs else "ERROR"
+    modo_txt = f"{fuente_usada} {ok_subs}/{len(subs)} ({bruto_tot} raw)" if ok_subs else "ERROR"
     color = C.CYAN if ok_subs == len(subs) else (C.YELLOW if ok_subs else C.RED)
     print(f"{color}[{'OK' if ok_subs else '!'}] {nombre_lote:<16} ({modo_txt}) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
     return items, {"fuente": nombre_lote, "modo": modo_txt, "ok": ok_subs > 0, "bruto": bruto_tot, "tech": tech_n, "descartes": stats_desc}
@@ -606,15 +660,19 @@ def buscar_reddit_global(query_str: str, query_pp: str, etiqueta: str, cfg: dict
         except Exception:
             pass
 
-    max_h_pp = max(48, safe_int(cfg.get("max_horas_post", 12), 12))
-    raw_list = consultar_pullpush({"q": query_pp, "size": 30, "sort": "desc", "sort_type": "created_utc"})
+    max_h_pp = max(36, safe_int(cfg.get("max_horas_post", 12), 12))
+    raw_list = consultar_arctic_shift({"title": query_pp, "limit": 30, "sort": "desc"})
+    modo_g = "ArcticShift"
+    if raw_list is None:
+        raw_list = consultar_pullpush({"q": query_pp, "size": 30, "sort": "desc", "sort_type": "created_utc"})
+        modo_g = "PullPush"
     if raw_list is not None:
         for d in raw_list:
             item = procesar_child_reddit(d, cfg, es_global=True, stats_descarte=stats_desc, max_horas_override=max_h_pp)
             if item and item["es_tech"]:
                 items.append(item)
-        print(f"{C.CYAN}[OK] {etiqueta:<16} (PullPush {len(raw_list):2d}) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
-        return items, {"fuente": etiqueta, "modo": "PullPush", "ok": True, "bruto": len(raw_list), "tech": len(items), "descartes": stats_desc}
+        print(f"{C.CYAN}[OK] {etiqueta:<16} ({modo_g} {len(raw_list):2d}) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
+        return items, {"fuente": etiqueta, "modo": modo_g, "ok": True, "bruto": len(raw_list), "tech": len(items), "descartes": stats_desc}
 
     print(f"{C.YELLOW}[!] {etiqueta:<16} Sin respuesta temporal{C.RESET}", flush=True)
     return items, {"fuente": etiqueta, "modo": "BLOQUEADO", "ok": False, "bruto": 0, "tech": 0, "descartes": stats_desc}
@@ -945,7 +1003,7 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
         pendientes = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('nuevo', 'contactado', 'negociando')").fetchone()[0]
 
         msg = (
-            f"<b>📊 RESUMEN ZEROTOUCH v12.8 ({hoy})</b>\n\n"
+            f"<b>📊 RESUMEN ZEROTOUCH v12.9 ({hoy})</b>\n\n"
             f"🛡️ <b>Basura bloqueada sin IA:</b> {desc} (~{t_ah:,} tokens ahorrados)\n"
             f"🤖 <b>Ofertas analizadas hoy:</b> {ev} (~{t_us:,} tokens usados)\n"
             f"⚡ <b>Alertas enviadas hoy:</b> {al}\n"
@@ -964,7 +1022,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
     max_ia = max(1, safe_int(cfg.get("max_ia_por_ciclo", 16), 16))
     t0 = time.time()
     hora = datetime.now().strftime("%H:%M:%S")
-    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.8"
+    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.9"
     log_evento(f"Iniciando escaneo {etiqueta_modo}")
     print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar {etiqueta_modo} (Fast-403 + PullPush Per-Sub + Bounties + HN)...{C.RESET}", flush=True)
 
@@ -1073,7 +1131,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
         if dry_run:
             resumen_txt = f"DRY-RUN en {dur}s | Fuentes: {f_ok}/{f_tot} | Bruto: {telemetria['bruto']} | Nuevas candidatas tech: {len(candidatas_preview)} | Bloqueados 0-tokens: {total_desc}"
         else:
-            resumen_txt = f"Ciclo v12.8 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
+            resumen_txt = f"Ciclo v12.9 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
         log_evento(resumen_txt)
         print(f"{C.GREEN}{resumen_txt}{C.RESET}", flush=True)
         if dry_run and candidatas_preview:
@@ -1103,7 +1161,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
 def modo_sniper() -> None:
     cfg = cargar_config()
     intervalo = max(45, safe_int(cfg.get("intervalo_sniper_seg", 70), 70))
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.8 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.9 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
     print(f"{C.DIM}Minimiza esta ventana mientras usas tu PC. Presiona Ctrl+C para salir.{C.RESET}")
     ciclo_n = 0
     try:

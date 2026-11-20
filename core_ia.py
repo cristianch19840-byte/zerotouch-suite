@@ -188,7 +188,7 @@ def extraer_presupuesto_usd(texto: str) -> float:
 
     return 0.0
 
-def cargar_env(ruta: str | None = None) -> None:
+def cargar_env(ruta: str | None = None, override: bool = False) -> None:
     archivo = ruta or os.path.join(ROOT_DIR, ".env")
     if os.path.exists(archivo):
         with open(archivo, encoding="utf-8-sig") as f:
@@ -196,7 +196,11 @@ def cargar_env(ruta: str | None = None) -> None:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+                    k, v = k.strip(), v.strip().strip('"').strip("'")
+                    if override:
+                        os.environ[k] = v
+                    else:
+                        os.environ.setdefault(k, v)
 
 cargar_env()
 
