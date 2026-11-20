@@ -7,6 +7,25 @@ if ROOT_DIR not in sys.path:
 
 from core_ia import C, cargar_config, preparar_db, generar_texto_ia, extraer_etiqueta, copiar_al_portapapeles
 
+def responder_objecion_ia(contexto: str, mensaje_cliente: str) -> dict | None:
+    prompt = (
+        "Eres un cerrador experto de ventas freelance tecnicas en ingles.\n"
+        f"Contexto del proyecto: {contexto or 'Proyecto freelance de Python/Automatizacion'}\n"
+        f"Mensaje del cliente: {mensaje_cliente}\n"
+        "Responde UNICAMENTE con estas 3 etiquetas XML:\n"
+        "<CONSEJO_ES>Lectura tactica rapida en 2 lineas (espanol).</CONSEJO_ES>\n"
+        "<RESPUESTA_FIRME>Respuesta corta y segura en ingles (35-55 palabras) defendiendo tu precio con valor tecnico.</RESPUESTA_FIRME>\n"
+        "<RESPUESTA_FLEXIBLE>Respuesta corta en ingles (35-55 palabras) ajustando alcance para encajar en su presupuesto sin regalarte.</RESPUESTA_FLEXIBLE>"
+    )
+    res = generar_texto_ia(prompt, temperatura=0.35)
+    if not res:
+        return None
+    return {
+        "consejo": extraer_etiqueta(res, "CONSEJO_ES"),
+        "firme": extraer_etiqueta(res, "RESPUESTA_FIRME"),
+        "flexible": extraer_etiqueta(res, "RESPUESTA_FLEXIBLE"),
+    }
+
 def generar_post_for_hire() -> None:
     cfg = cargar_config()
     print(f"\n{C.BOLD}{C.CYAN}--- GENERADOR DE POSTS [For Hire] / [Offer] ---{C.RESET}")
@@ -17,14 +36,14 @@ def generar_post_for_hire() -> None:
     print(" [5] r/freelance_forhire ([For Hire])")
     sub_map = {"1": "r/forhire", "2": "r/slavelabour", "3": "r/DoneDirtCheap", "4": "r/Jobs4Bitcoins", "5": "r/freelance_forhire"}
     sub = sub_map.get(input("Elige [1-5]: ").strip(), "r/forhire")
-    enfoque = input(f"Especialidad [Enter para usar tu config]: ").strip() or cfg.get("especialidad")
+    enfoque = input("Especialidad [Enter para usar tu config]: ").strip() or cfg.get("especialidad")
 
     prompt = (
         f"Crea una publicacion altamente persuasiva en ingles para {sub} que atraiga clientes freelance reales.\n"
         f"Especialidad: {enfoque}\n"
         f"Metodos de pago: {cfg.get('metodos_pago')}\n"
         f"GitHub: {cfg.get('github_url')}\n"
-        f"Reglas: Respeta estrictamente el prefijo de {sub} ([For Hire] o [Offer]). Lista problemas concretos con solucion rapida (24-48h) y muestra de prueba antes del pago final. Tono humano, directo, sin clichés de IA.\n"
+        f"Reglas: Respeta estrictamente el prefijo de {sub} ([For Hire] o [Offer]). Lista problemas concretos con solucion rapida (24-48h) y muestra de prueba antes del pago final. Tono humano, directo, sin cliches de IA.\n"
         "Responde UNICAMENTE con estas 2 etiquetas XML:\n"
         "<TITULO>Titulo listo para pegar</TITULO>\n"
         "<CUERPO>Cuerpo en Markdown limpio de Reddit</CUERPO>"
@@ -52,29 +71,16 @@ def negociador_objeciones() -> None:
     if not mensaje_cliente:
         return
 
-    prompt = (
-        "Eres un cerrador experto de ventas freelance tecnicas en ingles.\n"
-        f"Contexto del proyecto: {contexto}\n"
-        f"Mensaje del cliente: {mensaje_cliente}\n"
-        "Responde UNICAMENTE con estas 3 etiquetas XML:\n"
-        "<CONSEJO_ES>Lectura tactica rapida en 2 lineas (espanol).</CONSEJO_ES>\n"
-        "<RESPUESTA_FIRME>Respuesta corta y segura en ingles (35-55 palabras) defendiendo tu precio con valor tecnico.</RESPUESTA_FIRME>\n"
-        "<RESPUESTA_FLEXIBLE>Respuesta corta en ingles (35-55 palabras) ajustando alcance para encajar en su presupuesto sin regalarte.</RESPUESTA_FLEXIBLE>"
-    )
     print(f"{C.DIM}[*] Calculando contraofertas...{C.RESET}", flush=True)
-    res = generar_texto_ia(prompt, temperatura=0.35)
+    res = responder_objecion_ia(contexto, mensaje_cliente)
     if not res:
         return
 
-    consejo = extraer_etiqueta(res, "CONSEJO_ES")
-    firme = extraer_etiqueta(res, "RESPUESTA_FIRME")
-    flexible = extraer_etiqueta(res, "RESPUESTA_FLEXIBLE")
-    copiar_al_portapapeles(firme)
-
+    copiar_al_portapapeles(res["firme"])
     print("\n" + "=" * 68)
-    print(f"{C.BOLD}LECTURA TACTICA:{C.RESET}\n{consejo}\n")
-    print(f"{C.BOLD}{C.GREEN}OPCION A — FIRME (Copiada al portapapeles):{C.RESET}\n{firme}\n")
-    print(f"{C.BOLD}{C.CYAN}OPCION B — FLEXIBLE (Recortando alcance):{C.RESET}\n{flexible}")
+    print(f"{C.BOLD}LECTURA TACTICA:{C.RESET}\n{res['consejo']}\n")
+    print(f"{C.BOLD}{C.GREEN}OPCION A — FIRME (Copiada al portapapeles):{C.RESET}\n{res['firme']}\n")
+    print(f"{C.BOLD}{C.CYAN}OPCION B — FLEXIBLE (Recortando alcance):{C.RESET}\n{res['flexible']}")
     print("=" * 68 + "\n")
 
 def generar_bio_perfil() -> None:
@@ -110,16 +116,14 @@ def generar_portafolio_md() -> None:
 
     proj_dir = os.path.join(ROOT_DIR, "proyectos")
     carpetas = os.listdir(proj_dir)[:8] if os.path.exists(proj_dir) else []
-    extra = input("Algun proyecto propio extra que quieras destacar (ej. Jarvis AI Assistant, ZeroTouch Radar)?: ").strip()
+    extra = input("Proyectos propios extra a destacar [Enter para defaults]: ").strip()
 
     prompt = (
-        "Crea un archivo PORTAFOLIO.md impresionante y directo en ingles para compartir en GitHub o enviar a clientes freelance.\n"
-        f"Marca/Nombre: {cfg.get('nombre_marca')}\n"
-        f"Especialidad: {cfg.get('especialidad')}\n"
-        f"Proyectos ganados registrados: {ganados}\n"
-        f"Proyectos locales: {carpetas}\n"
-        f"Proyectos destacados extra: {extra or 'ZeroTouch 24/7 Lead Radar (Python + GitHub Actions + Telegram + Gemini API), Local AI Assistant'}\n"
-        "Incluye: Resumen de 3 lineas, Stack tecnico, 3-4 Casos de Estudio (Problema -> Solucion -> Impacto), Metodos de pago y Call to Action.\n"
+        "Crea un archivo PORTAFOLIO.md impresionante y directo en ingles para GitHub y clientes freelance.\n"
+        f"Marca: {cfg.get('nombre_marca')}\nEspecialidad: {cfg.get('especialidad')}\n"
+        f"Ganados: {ganados}\nProyectos locales: {carpetas}\n"
+        f"Extra: {extra or 'ZeroTouch 24/7 Lead Radar (Python + GitHub Actions + Telegram + Gemini API), Local AI Assistant'}\n"
+        "Incluye: Resumen de 3 lineas, Stack tecnico, 3-4 Casos de Estudio (Problema -> Solucion -> Impacto), Metodos de pago y CTA.\n"
         "Devuelve UNICAMENTE el contenido dentro de <PORTAFOLIO>...</PORTAFOLIO>."
     )
     print(f"{C.CYAN}[*] Construyendo PORTAFOLIO.md profesional...{C.RESET}", flush=True)
@@ -137,11 +141,11 @@ def main() -> None:
     if modo == "--negociar":
         negociador_objeciones()
         return
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO D: IMAN DE CLIENTES & MARKETING v9.0 ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO D: IMAN DE CLIENTES & MARKETING v10.0 ==={C.RESET}")
     print(" [1] Generar post [For Hire] / [Offer] para Reddit")
     print(" [2] Negociador IA en vivo (responder objeciones)")
     print(" [3] Generar Bios (Reddit, GitHub y Whop)")
-    print(" [4] Generar PORTAFOLIO.md en ingles para cerrar clientes mas rapido")
+    print(" [4] Generar PORTAFOLIO.md en ingles")
     op = input("\nElige una opcion: ").strip()
     if op == "1":
         generar_post_for_hire()

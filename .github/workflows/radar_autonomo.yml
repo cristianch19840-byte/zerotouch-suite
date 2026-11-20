@@ -1,4 +1,4 @@
-name: Radar Zero-Touch v9 OMEGA
+name: Radar Zero-Touch v10 PRIME
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: zerotouch-omega-radar
+  group: zerotouch-prime-radar
   cancel-in-progress: false
 
 jobs:
@@ -29,12 +29,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: estado_radar_v4.db
-          key: radar-db-v9-${{ github.run_id }}
+          key: radar-db-v10-${{ github.run_id }}
           restore-keys: |
+            radar-db-v10-
             radar-db-v9-
             radar-db-v8-
 
-      - name: Ejecutar Radar OMEGA v9.0
+      - name: Ejecutar Radar PRIME v10.0
         env:
           GEMINI_API_KEY_FREE: ${{ secrets.GEMINI_API_KEY_FREE }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
