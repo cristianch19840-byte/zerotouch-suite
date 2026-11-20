@@ -54,7 +54,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ZeroTouch APEX v12.5 — Freelance OS</title>
+<title>ZeroTouch APEX v12.8 — Freelance OS</title>
 <style>
   :root {
     --bg:#060911; --sidebar:#0b1120; --card:#0f172a; --card2:#162033;
@@ -146,7 +146,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 </head>
 <body>
   <aside class="side">
-    <div class="brand">⚡ ZeroTouch <span>APEX</span><small>v12.5 Unified Freelance OS</small></div>
+    <div class="brand">⚡ ZeroTouch <span>APEX</span><small>v12.8 Unified Freelance OS</small></div>
     <div class="nav-grp">Operacion</div>
     <button class="nav-btn active" id="nav_crm" onclick="verTab('t_crm','📡 Radar & CRM',this)">📡 Radar & CRM</button>
     <button class="nav-btn" onclick="verTab('t_stats','📊 Analytics & Pipeline',this)">📊 Analytics & Pipeline</button>
@@ -158,7 +158,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <button class="nav-btn" id="nav_whop" onclick="verTab('t_whop','📦 Whop, Facturas & Calc',this)">📦 Whop, Facturas & Calc</button>
     <div class="nav-grp">Sistema</div>
     <button class="nav-btn" onclick="verTab('t_cfg','⚙️ Ajustes & Salud',this)">⚙️ Ajustes & Salud</button>
-    <div class="side-foot">APEX v12.5 • 16 Fuentes • AST</div>
+    <div class="side-foot">APEX v12.8 • 16 Fuentes • AST</div>
   </aside>
 
   <main class="main">
@@ -1004,11 +1004,20 @@ class Handler(BaseHTTPRequestHandler):
                         lineas.append(f"4. Telegram API      : Error ({e})")
                 else:
                     lineas.append("4. Telegram API      : FALTA TELEGRAM_TOKEN")
-                try:
-                    rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v12.5"}, timeout=6)
-                    lineas.append(f"5. Reddit API        : {'OK (JSON en vivo)' if rr.status_code == 200 else 'Fallback XML Nativo (HTTP ' + str(rr.status_code) + ')'}")
-                except Exception as e:
-                    lineas.append(f"5. Reddit API        : Error ({e})")
+                from modulo_a_radar_whop.motor_zerotouch_v4 import obtener_headers_reddit_oauth, consultar_pullpush
+                h_oa = obtener_headers_reddit_oauth()
+                if h_oa:
+                    try:
+                        ro = SESSION.get("https://oauth.reddit.com/r/forhire/new?limit=1", headers=h_oa, timeout=6)
+                        lineas.append(f"5. Reddit API        : {'OK (OAuth2 Oficial en vivo)' if ro.status_code == 200 else 'OAuth HTTP ' + str(ro.status_code)}")
+                    except Exception as e:
+                        lineas.append(f"5. Reddit API        : Error OAuth ({e})")
+                else:
+                    pp_ok = consultar_pullpush({"subreddit": "forhire", "size": 1}) is not None
+                    if pp_ok:
+                        lineas.append("5. Reddit API        : OK via PullPush (Tip: agrega REDDIT_CLIENT_ID en .env para modo OAuth2 en vivo)")
+                    else:
+                        lineas.append("5. Reddit API        : Bloqueado 403 (agrega REDDIT_CLIENT_ID y REDDIT_CLIENT_SECRET en .env)")
                 resp = generar_texto_ia("Responde solo OK", temperatura=0.0, timeout=10) if key else None
                 lineas.append(f"6. Gemini API        : {'OK' if resp else 'SIN RESPUESTA'}")
                 self._send_json({"reporte": "\n".join(lineas)})
@@ -1142,7 +1151,7 @@ class Handler(BaseHTTPRequestHandler):
                 prueba = {
                     "fuente": "r/forhire",
                     "autor": "spez",
-                    "titulo": "[Hiring] Test Alert APEX v12.5 ($250 USD)",
+                    "titulo": "[Hiring] Test Alert APEX v12.8 ($250 USD)",
                     "texto": "Need a Python script to scrape product prices into CSV.",
                     "link": "https://www.reddit.com/r/forhire/",
                     "comp_txt": "🎯 SANGRE FRESCA (1m | 0 com.)",
@@ -1260,8 +1269,8 @@ def main() -> None:
         webbrowser.open(url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
-    log_evento("Servidor Web APEX v12.5 iniciado en " + url)
-    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH APEX v12.5 WEB OS: {url} ==={C.RESET}")
+    log_evento("Servidor Web APEX v12.8 iniciado en " + url)
+    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH APEX v12.8 WEB OS: {url} ==={C.RESET}")
     print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
     webbrowser.open(url)
     try:

@@ -53,6 +53,37 @@ RSS2JSON_LOCK = threading.Lock()
 PULLPUSH_LOCK = threading.Lock()
 _REDDIT_LOCK = threading.Lock()
 _REDDIT_DIRECTO_403 = False
+_OAUTH_TOKEN: str | None = None
+_OAUTH_EXPIRA: float = 0.0
+OAUTH_UA = "windows:zerotouch-radar:v12.8 (by /u/zerotouch_freelance)"
+
+def obtener_headers_reddit_oauth() -> dict | None:
+    global _OAUTH_TOKEN, _OAUTH_EXPIRA
+    cid = (os.getenv("REDDIT_CLIENT_ID") or "").strip()
+    csec = (os.getenv("REDDIT_CLIENT_SECRET") or "").strip()
+    if not cid or not csec:
+        return None
+    ahora = time.time()
+    with _REDDIT_LOCK:
+        if _OAUTH_TOKEN and ahora < _OAUTH_EXPIRA:
+            return {"Authorization": f"Bearer {_OAUTH_TOKEN}", "User-Agent": OAUTH_UA}
+        try:
+            r = SESSION.post(
+                "https://www.reddit.com/api/v1/access_token",
+                auth=(cid, csec),
+                data={"grant_type": "client_credentials"},
+                headers={"User-Agent": OAUTH_UA},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                tok = r.json().get("access_token")
+                if tok:
+                    _OAUTH_TOKEN = tok
+                    _OAUTH_EXPIRA = ahora + max(300, safe_int(r.json().get("expires_in", 3600), 3600) - 120)
+                    return {"Authorization": f"Bearer {_OAUTH_TOKEN}", "User-Agent": OAUTH_UA}
+        except Exception:
+            pass
+    return None
 
 MULTIREDDIT_BATCHES = [
     ("Batch-Core", ["forhire", "slavelabour", "hiring", "freelance_forhire", "DoneDirtCheap"]),
@@ -442,7 +473,40 @@ def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tu
     stats_desc: dict[str, int] = {}
     items: list = []
 
+    # Nivel 0: Reddit OAuth2 oficial (sin HTTP 403, tiempo real y 100 req/min)
+    h_oauth = obtener_headers_reddit_oauth()
+    if h_oauth:
+        try:
+            r = SESSION.get(f"https://oauth.reddit.com/r/{combo}/new?limit=45&raw_json=1", headers=h_oauth, timeout=10)
+            if r.status_code == 200:
+                children = r.json().get("data", {}).get("children", [])
+                for child in children:
+                    it = procesar_child_reddit(child.get("data", {}), cfg, stats_descarte=stats_desc)
+                    if it:
+                        items.append(it)
+                tech_n = sum(1 for x in items if x["es_tech"])
+                print(f"{C.GREEN}[OK] {nombre_lote:<16} (OAuth2 {len(children):2d} raw) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
+                return items, {"fuente": nombre_lote, "modo": "OAuth2", "ok": True, "bruto": len(children), "tech": tech_n, "descartes": stats_desc}
+        except Exception:
+            pass
+
     # Nivel 1 y 2: Reddit directo solo si no detectamos 403 en este ciclo
+    h_oauth = obtener_headers_reddit_oauth()
+    if h_oauth:
+        try:
+            url = f"https://oauth.reddit.com/search?q={quote(query_str)}&sort=new&t=day&limit=25&raw_json=1"
+            r = SESSION.get(url, headers=h_oauth, timeout=10)
+            if r.status_code == 200:
+                children = r.json().get("data", {}).get("children", [])
+                for child in children:
+                    item = procesar_child_reddit(child.get("data", {}), cfg, es_global=True, stats_descarte=stats_desc)
+                    if item and item["es_tech"]:
+                        items.append(item)
+                print(f"{C.GREEN}[OK] {etiqueta:<16} (OAuth2 {len(children):2d} raw) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
+                return items, {"fuente": etiqueta, "modo": "OAuth2", "ok": True, "bruto": len(children), "tech": len(items), "descartes": stats_desc}
+        except Exception:
+            pass
+
     if reddit_directo_disponible():
         try:
             r = SESSION.get(f"https://www.reddit.com/r/{combo}/new.json?limit=45&raw_json=1", headers=REDDIT_HEADERS, timeout=8)
@@ -881,7 +945,7 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
         pendientes = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('nuevo', 'contactado', 'negociando')").fetchone()[0]
 
         msg = (
-            f"<b>📊 RESUMEN ZEROTOUCH v12.7 ({hoy})</b>\n\n"
+            f"<b>📊 RESUMEN ZEROTOUCH v12.8 ({hoy})</b>\n\n"
             f"🛡️ <b>Basura bloqueada sin IA:</b> {desc} (~{t_ah:,} tokens ahorrados)\n"
             f"🤖 <b>Ofertas analizadas hoy:</b> {ev} (~{t_us:,} tokens usados)\n"
             f"⚡ <b>Alertas enviadas hoy:</b> {al}\n"
@@ -900,7 +964,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
     max_ia = max(1, safe_int(cfg.get("max_ia_por_ciclo", 16), 16))
     t0 = time.time()
     hora = datetime.now().strftime("%H:%M:%S")
-    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.7"
+    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.8"
     log_evento(f"Iniciando escaneo {etiqueta_modo}")
     print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar {etiqueta_modo} (Fast-403 + PullPush Per-Sub + Bounties + HN)...{C.RESET}", flush=True)
 
@@ -1009,7 +1073,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
         if dry_run:
             resumen_txt = f"DRY-RUN en {dur}s | Fuentes: {f_ok}/{f_tot} | Bruto: {telemetria['bruto']} | Nuevas candidatas tech: {len(candidatas_preview)} | Bloqueados 0-tokens: {total_desc}"
         else:
-            resumen_txt = f"Ciclo v12.7 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
+            resumen_txt = f"Ciclo v12.8 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
         log_evento(resumen_txt)
         print(f"{C.GREEN}{resumen_txt}{C.RESET}", flush=True)
         if dry_run and candidatas_preview:
@@ -1039,7 +1103,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
 def modo_sniper() -> None:
     cfg = cargar_config()
     intervalo = max(45, safe_int(cfg.get("intervalo_sniper_seg", 70), 70))
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.7 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.8 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
     print(f"{C.DIM}Minimiza esta ventana mientras usas tu PC. Presiona Ctrl+C para salir.{C.RESET}")
     ciclo_n = 0
     try:
