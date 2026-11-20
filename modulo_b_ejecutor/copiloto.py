@@ -4,7 +4,8 @@ import ast
 import sys
 import subprocess
 from datetime import datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs
+from bs4 import BeautifulSoup
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
@@ -13,6 +14,7 @@ if ROOT_DIR not in sys.path:
 from core_ia import (
     C,
     SESSION,
+    safe_float,
     log_evento,
     cargar_config,
     preparar_db,
@@ -23,51 +25,287 @@ from core_ia import (
     validar_y_reparar_python,
     analizar_dependencias,
 )
+from modulo_a_radar_whop.conectores.base import BROWSER_HEADERS
+from modulo_a_radar_whop.conectores.filtros import limpiar_html
+from modulo_a_radar_whop.conectores.reddit import obtener_headers_reddit_oauth
 
-def descargar_post_reddit(url: str) -> tuple[str | None, str, str]:
-    headers = {"User-Agent": "python:zerotouch-copiloto:v12.0 (by /u/zerotouch_freelance)"}
+PLAYBOOKS_PLATAFORMA = {
+    "Reddit": (
+        "Plataforma: Reddit. Tono directo de desarrollador independiente (nada corporativo). "
+        "Demuestra diagnostico tecnico en la primera frase, propone entrega rapida y, si es r/slavelabour o r/DoneDirtCheap, recuerda comentar $bid antes del DM."
+    ),
+    "Freelancer": (
+        "Plataforma: Freelancer.com (caja de pujas/bids). REGLA CRITICA: el cliente solo ve las primeras 2 lineas en la vista previa, "
+        "asi que arranca con un gancho tecnico exacto mencionando su problema concreto. Incluye plan en 3 pasos cortos, plazo estimado y propuesta de milestone."
+    ),
+    "GitHub": (
+        "Plataforma: GitHub Issue / Bounty. CERO tono de vendedor. Escribe un comentario tecnico de ingenieria: "
+        "diagnostico del bug/feature, enfoque de implementacion en 3 puntos, archivos/modulos a tocar y pregunta directa para reclamar/asignar el issue (/attempt o confirmacion del maintainer)."
+    ),
+    "HackerNews": (
+        "Plataforma: Hacker News. Tono peer-to-peer entre ingenieros y founders: ultra conciso, alta senal tecnica, "
+        "menciona experiencia concreta en Python/scraping/automatizacion, link a GitHub y disponibilidad inmediata para una llamada breve o prueba paga."
+    ),
+    "Remoto": (
+        "Plataforma: Bolsa de trabajo remoto / contrato tech. Redacta una nota de aplicacion (cover note) concisa y ejecutiva: "
+        "conecta tu stack (Python, APIs, automatizacion, bots, scraping) con el rol, destaca comunicacion asincrona y cierra proponiendo una llamada corta o tarea de prueba."
+    ),
+}
+
+def detectar_plataforma_url(url: str) -> str:
+    low = (url or "").lower()
+    if "reddit.com" in low or "redd.it" in low:
+        return "Reddit"
+    if "freelancer.com" in low:
+        return "Freelancer"
+    if "github.com" in low:
+        return "GitHub"
+    if "news.ycombinator.com" in low:
+        return "HackerNews"
+    if "remoteok.com" in low:
+        return "RemoteOK"
+    if "weworkremotely.com" in low:
+        return "WWR"
+    if "remotive.com" in low:
+        return "Remotive"
+    if "jobicy.com" in low:
+        return "Jobicy"
+    if "himalayas.app" in low:
+        return "Himalayas"
+    if "workingnomads.com" in low:
+        return "WorkingNomads"
+    if "arbeitnow.com" in low:
+        return "Arbeitnow"
+    return "Web"
+
+def detectar_plataforma_texto(oferta: str) -> str:
+    cab = (oferta or "")[:450].lower()
+    if "freelancer.com" in cab or "plataforma: freelancer" in cab:
+        return "Freelancer"
+    if "github.com" in cab or "github bounty" in cab or "plataforma: github" in cab:
+        return "GitHub"
+    if "news.ycombinator.com" in cab or "hackernews" in cab or "[hn]" in cab:
+        return "HackerNews"
+    if "reddit.com" in cab or "fuente: r/" in cab or "plataforma: reddit" in cab:
+        return "Reddit"
+    for p in ("remoteok", "weworkremotely", "remotive", "jobicy", "himalayas", "workingnomads", "arbeitnow"):
+        if p in cab:
+            return "Remoto"
+    return "Reddit"
+
+def _playbook_para(plataforma: str) -> str:
+    if plataforma in PLAYBOOKS_PLATAFORMA:
+        return PLAYBOOKS_PLATAFORMA[plataforma]
+    return PLAYBOOKS_PLATAFORMA["Remoto"]
+
+def _descargar_reddit_con_rescate(url: str) -> tuple[str | None, str, str]:
+    objetivo = url.strip()
     try:
-        objetivo = url.strip()
         if "/s/" in objetivo or "redd.it" in objetivo or "old.reddit.com" in objetivo or "m.reddit.com" in objetivo:
-            r_res = SESSION.get(objetivo, headers=headers, allow_redirects=True, timeout=10)
+            r_res = SESSION.get(objetivo, headers=BROWSER_HEADERS, allow_redirects=True, timeout=10)
             if r_res.url:
                 objetivo = r_res.url
+
         limpia = objetivo.split("?")[0].rstrip("/")
+        # Intento 1: OAuth2 si el usuario tiene llaves
+        h_oa = obtener_headers_reddit_oauth()
+        if h_oa:
+            path_part = urlparse(limpia).path.rstrip("/")
+            r_oa = SESSION.get(f"https://oauth.reddit.com{path_part}.json?raw_json=1", headers=h_oa, timeout=10)
+            if r_oa.status_code == 200:
+                payload = r_oa.json()
+                if isinstance(payload, list) and payload:
+                    ch = payload[0].get("data", {}).get("children", [])
+                    if ch:
+                        d = ch[0].get("data", {})
+                        return f"Plataforma: Reddit\nFuente: {d.get('subreddit_name_prefixed', 'Reddit')}\nAutor: u/{d.get('author', '')}\nTitulo: {d.get('title', '')}\n\n{d.get('selftext', '')}".strip(), d.get("author", ""), d.get("title", "")
+
+        # Intento 2: JSON directo con Browser UA
         json_url = limpia if limpia.endswith(".json") else f"{limpia}.json?raw_json=1"
-        r = SESSION.get(json_url, headers=headers, timeout=12)
+        r = SESSION.get(json_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
             payload = r.json()
             if isinstance(payload, list) and payload:
-                children = payload[0].get("data", {}).get("children", [])
-                if children:
-                    data = children[0].get("data", {})
-                    titulo = data.get("title", "")
-                    cuerpo = data.get("selftext", "")
-                    sub = data.get("subreddit_name_prefixed", "Reddit")
-                    autor = data.get("author", "")
-                    return f"Fuente: {sub}\nAutor: u/{autor}\nTitulo: {titulo}\n\n{cuerpo}".strip(), autor, titulo
+                ch = payload[0].get("data", {}).get("children", [])
+                if ch:
+                    d = ch[0].get("data", {})
+                    return f"Plataforma: Reddit\nFuente: {d.get('subreddit_name_prefixed', 'Reddit')}\nAutor: u/{d.get('author', '')}\nTitulo: {d.get('title', '')}\n\n{d.get('selftext', '')}".strip(), d.get("author", ""), d.get("title", "")
+
+        # Intento 3: Rescate Anti-403 via Arctic Shift por ID del post
+        m_id = re.search(r"/comments/([a-z0-9]+)", limpia, re.IGNORECASE)
+        if m_id:
+            post_id = m_id.group(1)
+            r_as = SESSION.get(
+                "https://arctic-shift.photon-reddit.com/api/posts/ids",
+                params={"ids": post_id},
+                headers={"User-Agent": BROWSER_HEADERS["User-Agent"], "Accept": "application/json"},
+                timeout=10,
+            )
+            if r_as.status_code == 200:
+                data_list = r_as.json().get("data") or []
+                if isinstance(data_list, list) and data_list:
+                    d = data_list[0]
+                    sub = d.get("subreddit", "Reddit")
+                    autor = d.get("author", "")
+                    titulo = d.get("title", "")
+                    cuerpo = d.get("selftext", "")
+                    return f"Plataforma: Reddit\nFuente: r/{sub}\nAutor: u/{autor}\nTitulo: {titulo}\n\n{cuerpo}".strip(), autor, titulo
     except Exception as e:
-        log_evento(f"Copiloto no pudo leer link Reddit: {e}")
-        print(f"{C.YELLOW}[!] No pude leer el link automatico ({e}).{C.RESET}")
+        log_evento(f"Copiloto Reddit aviso: {e}")
     return None, "", ""
 
-def cargar_desde_crm(lead_id: int) -> tuple[str | None, str, str]:
+def _descargar_github_issue(url: str) -> tuple[str | None, str, str]:
+    m = re.search(r"github\.com/([^/]+)/([^/]+)/issues/(\d+)", url, re.IGNORECASE)
+    if not m:
+        return None, "", ""
+    owner, repo, num = m.group(1), m.group(2), m.group(3)
+    headers = {"User-Agent": "ZeroTouchOmni/13.0", "Accept": "application/vnd.github+json"}
+    if os.getenv("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
+    try:
+        r = SESSION.get(f"https://api.github.com/repos/{owner}/{repo}/issues/{num}", headers=headers, timeout=10)
+        if r.status_code == 200:
+            d = r.json()
+            titulo = (d.get("title") or "").strip()
+            autor = (d.get("user") or {}).get("login", owner)
+            labels = ", ".join(str(lb.get("name", "")) for lb in (d.get("labels") or []))
+            cuerpo = (d.get("body") or "")[:2400]
+            txt = f"Plataforma: GitHub\nRepo: {owner}/{repo} (Issue #{num})\nLabels: {labels}\nAutor: {autor}\nTitulo: {titulo}\n\n{cuerpo}".strip()
+            return txt, autor, titulo
+    except Exception as e:
+        log_evento(f"Copiloto GitHub aviso: {e}")
+    return None, "", ""
+
+def _descargar_hackernews(url: str) -> tuple[str | None, str, str]:
+    qs = parse_qs(urlparse(url).query)
+    item_id = (qs.get("id") or [""])[0]
+    if not item_id.isdigit():
+        return None, "", ""
+    try:
+        r = SESSION.get(f"https://hn.algolia.com/api/v1/items/{item_id}", timeout=10)
+        if r.status_code == 200:
+            d = r.json()
+            autor = d.get("author") or "hackernews"
+            titulo = d.get("title") or f"HN Item #{item_id}"
+            texto = limpiar_html(d.get("text") or "", 2200)
+            txt = f"Plataforma: HackerNews\nAutor: {autor}\nTitulo: {titulo}\nLink: {url}\n\n{texto}".strip()
+            return txt, autor, titulo
+    except Exception as e:
+        log_evento(f"Copiloto HN aviso: {e}")
+    return None, "", ""
+
+def _descargar_freelancer(url: str) -> tuple[str | None, str, str]:
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    params: dict = {"full_description": "true", "job_details": "true", "compact": "true"}
+    m_num = re.search(r"/projects/(\d+)(?:/|$)", parsed.path)
+    if m_num:
+        params["projects[]"] = m_num.group(1)
+    elif path.startswith("projects/"):
+        seo = path[len("projects/"):].strip("/")
+        if seo:
+            params["seo_urls[]"] = seo
+    try:
+        r = SESSION.get(
+            "https://www.freelancer.com/api/projects/0.1/projects/",
+            params=params,
+            headers=BROWSER_HEADERS,
+            timeout=10,
+        )
+        if r.status_code == 200:
+            projs = r.json().get("result", {}).get("projects", [])
+            if projs:
+                p = projs[0]
+                titulo = (p.get("title") or "").strip()
+                desc = (p.get("description") or p.get("preview_description") or "")[:2400]
+                jobs = ", ".join(str(j.get("name", "")) for j in (p.get("jobs") or []) if isinstance(j, dict))
+                bud = p.get("budget") or {}
+                cur = p.get("currency") or {}
+                rate = safe_float(cur.get("exchange_rate"), 1.0) or 1.0
+                bmin = int(safe_float(bud.get("minimum"), 0) * rate)
+                bmax = int(safe_float(bud.get("maximum"), 0) * rate)
+                pres = f"${bmin}-${bmax} USD" if bmax > 0 else "Por definir"
+                bids = (p.get("bid_stats") or {}).get("bid_count", 0)
+                txt = f"Plataforma: Freelancer\nFuente: Freelancer.com\nPresupuesto: {pres} | Pujas actuales: {bids}\nSkills: {jobs}\nTitulo: {titulo}\n\n{desc}".strip()
+                return txt, "freelancer_client", titulo
+    except Exception as e:
+        log_evento(f"Copiloto Freelancer API aviso: {e}")
+    return None, "", ""
+
+def _descargar_web_generica(url: str, plataforma: str) -> tuple[str | None, str, str]:
+    try:
+        r = SESSION.get(url, headers=BROWSER_HEADERS, timeout=12)
+        if r.status_code != 200:
+            return None, "", ""
+        soup = BeautifulSoup(r.text, "html.parser")
+        for tag in soup(["script", "style", "noscript", "svg", "header", "footer", "nav"]):
+            tag.decompose()
+        h1 = soup.find("h1")
+        titulo = (h1.get_text(" ", strip=True) if h1 else (soup.title.get_text(" ", strip=True) if soup.title else plataforma))[:180]
+        main_el = soup.find("main") or soup.find("article") or soup.body or soup
+        cuerpo = re.sub(r"\s+", " ", main_el.get_text(" ", strip=True))[:2400]
+        if len(cuerpo) < 40:
+            return None, "", ""
+        txt = f"Plataforma: {plataforma}\nLink: {url}\nTitulo: {titulo}\n\n{cuerpo}".strip()
+        return txt, plataforma, titulo
+    except Exception as e:
+        log_evento(f"Copiloto Web aviso ({plataforma}): {e}")
+    return None, "", ""
+
+def descargar_oferta_universal(url: str) -> tuple[str | None, str, str, str]:
+    """Extrae el contenido de cualquier link soportado y devuelve (texto, autor, titulo, plataforma)."""
+    plat = detectar_plataforma_url(url)
+    oferta: str | None = None
+    autor = ""
+    titulo = ""
+
+    if plat == "Reddit":
+        oferta, autor, titulo = _descargar_reddit_con_rescate(url)
+    elif plat == "GitHub":
+        oferta, autor, titulo = _descargar_github_issue(url)
+    elif plat == "HackerNews":
+        oferta, autor, titulo = _descargar_hackernews(url)
+    elif plat == "Freelancer":
+        oferta, autor, titulo = _descargar_freelancer(url)
+
+    if not oferta:
+        oferta, autor, titulo = _descargar_web_generica(url, plat)
+
+    return oferta, autor, titulo, plat
+
+def descargar_post_reddit(url: str) -> tuple[str | None, str, str]:
+    """Compatibilidad con v12.x: ahora tambien resuelve cualquier link universal."""
+    oferta, autor, titulo, _ = descargar_oferta_universal(url)
+    return oferta, autor, titulo
+
+def cargar_desde_crm_completo(lead_id: int) -> tuple[str | None, str, str, str, str]:
     conn = preparar_db()
     try:
-        row = conn.execute("SELECT fuente, autor, titulo, presupuesto, link FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        row = conn.execute(
+            "SELECT fuente, plataforma, tipo_trabajo, autor, titulo, presupuesto, link FROM leads WHERE id = ?",
+            (lead_id,),
+        ).fetchone()
         if not row:
-            return None, "", ""
-        fuente, autor, titulo, pres, link = row
-        if link and ("reddit.com" in link or "redd.it" in link):
-            oferta, a_red, t_red = descargar_post_reddit(link)
+            return None, "", "", "", ""
+        fuente, plataforma, tipo_trabajo, autor, titulo, pres, link = row
+        plat = plataforma or detectar_plataforma_url(link or "") or fuente or "Reddit"
+        tipo = tipo_trabajo or "freelance"
+        if link and link.startswith("http"):
+            oferta, a_ext, t_ext, p_ext = descargar_oferta_universal(link)
             if oferta:
-                return oferta, a_red or autor, t_red or titulo
-        return f"Fuente: {fuente}\nPresupuesto: {pres}\nTitulo: {titulo}\nLink: {link}", autor, titulo
+                return oferta, (a_ext or autor or ""), (t_ext or titulo or ""), (p_ext or plat), tipo
+        respaldo = f"Plataforma: {plat}\nTipo: {tipo}\nFuente: {fuente}\nPresupuesto: {pres}\nTitulo: {titulo}\nLink: {link}"
+        return respaldo, (autor or ""), (titulo or ""), plat, tipo
     finally:
         conn.close()
 
+def cargar_desde_crm(lead_id: int) -> tuple[str | None, str, str]:
+    """Compatibilidad 3-tupla con dashboard_web.py y telegram_bot_control.py."""
+    oferta, autor, titulo, _, _ = cargar_desde_crm_completo(lead_id)
+    return oferta, autor, titulo
+
 def crear_slug(texto: str) -> str:
-    palabras = re.sub(r"[^a-zA-Z0-9\s]", "", texto.lower()).split()[:5]
+    palabras = re.sub(r"[^a-zA-Z0-9\s]", "", (texto or "").lower()).split()[:5]
     return "_".join(palabras) or "proyecto"
 
 def resolver_ruta_script(ruta_script: str = "") -> str:
@@ -139,54 +377,68 @@ def refinar_borrador_ia(instruccion: str, ruta_script: str = "") -> dict:
         "faltantes_pip": faltantes_pip,
     }
 
-def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", guardar_archivos: bool = True) -> dict | None:
+def analizar_oferta_completo(
+    oferta: str,
+    autor: str = "",
+    titulo: str = "",
+    guardar_archivos: bool = True,
+    plataforma: str = "",
+    tipo_trabajo: str = "",
+) -> dict | None:
     cfg = cargar_config()
-    confianza = verificar_confianza_reddit(autor) if autor else ""
+    plat = plataforma or detectar_plataforma_texto(oferta)
+    playbook = _playbook_para(plat)
+    confianza = verificar_confianza_reddit(autor) if (plat == "Reddit" and autor) else f"🌐 Plataforma: {plat}"
     tarifa = cfg.get("tarifa_hora_usd", 25)
 
     prompt = (
         "Eres un desarrollador senior y cerrador freelance de Python/Automatizacion.\n"
+        f"PLAYBOOK DE PLATAFORMA: {playbook}\n"
         f"Tarifa base de referencia del dev: ${tarifa} USD/hora.\n"
         f"Metodos de pago: {cfg.get('metodos_pago')}\n"
         f"GitHub: {cfg.get('github_url')}\n"
-        "Analiza esta oferta y responde UNICAMENTE usando estas 10 etiquetas XML (sin texto fuera):\n\n"
+        "Analiza esta oferta y responde UNICAMENTE usando estas 11 etiquetas XML (sin texto fuera):\n\n"
+        "<ESTRATEGIA_PLATAFORMA>\n"
+        f"Consejo tactico exacto (2 lineas en espanol) sobre como destacar y cerrar esta oferta especificamente en {plat}.\n"
+        "</ESTRATEGIA_PLATAFORMA>\n\n"
         "<DIAGNOSTICO>\n"
         "Que pide el cliente, stack exacto y el detalle tecnico clave para demostrar dominio (2-3 lineas en espanol).\n"
         "</DIAGNOSTICO>\n\n"
         "<RED_FLAGS>\n"
-        "Senales de alerta (presupuesto bajo, alcance vago, riesgo de no pago o bloqueos anti-bot) o escribe 'Ninguna alerta critica — buen cliente' (1-2 lineas en espanol).\n"
+        "Senales de alerta (presupuesto bajo, alcance vago, bloqueos anti-bot o riesgo de impago) o escribe 'Ninguna alerta critica — buena oportunidad' (1-2 lineas en espanol).\n"
         "</RED_FLAGS>\n\n"
         "<PRECIOS>\n"
-        "3 opciones en USD en 3 lineas (calculadas con la tarifa base y complejidad): Basico (script rapido), Estandar (robusto + CSV/JSON), Premium (automatizacion + soporte).\n"
+        "3 opciones en USD en 3 lineas (o rango mensual/hora si es contrato remoto): Basico, Estandar y Premium.\n"
         "</PRECIOS>\n\n"
         "<PITCH_A>\n"
-        "Pitch estilo A — Directo y Tecnico en ingles (45-65 palabras): diagnostico inmediato, plazo concreto, cero relleno.\n"
+        f"Pitch estilo A en ingles natural (50-75 palabras) siguiendo al pie de la letra el PLAYBOOK de {plat}. Directo, tecnico y sin sonar a IA.\n"
         "</PITCH_A>\n\n"
         "<PITCH_B>\n"
-        "Pitch estilo B — Consultivo y Cercano en ingles (45-65 palabras): enfocado en el resultado de negocio y oferta de prototipo rapido.\n"
+        f"Pitch estilo B alternativo en ingles (50-75 palabras) mas consultivo y enfocado en impacto de negocio para {plat}.\n"
         "</PITCH_B>\n\n"
         "<PREGUNTAS_CIERRE>\n"
         "2 preguntas tecnicas cortas en ingles para cerrar alcance y precio cuando responda.\n"
         "</PREGUNTAS_CIERRE>\n\n"
         "<FOLLOWUP>\n"
-        "Mensaje corto de seguimiento en ingles (25-35 palabras) para enviar 24h despues si te dejan en visto.\n"
+        "Mensaje corto de seguimiento en ingles (25-35 palabras) para enviar 24-48h despues si no hay respuesta.\n"
         "</FOLLOWUP>\n\n"
         "<MENSAJE_COBRO>\n"
-        f"Mensaje profesional en ingles (35-50 palabras) para enviar junto a la captura de muestra pidiendo 50% o pago final via {cfg.get('metodos_pago')}.\n"
+        f"Mensaje profesional en ingles (35-50 palabras) para enviar con prueba de avance pidiendo hito/50% o pago final via {cfg.get('metodos_pago')}.\n"
         "</MENSAJE_COBRO>\n\n"
         "<MICRO_CONTRATO>\n"
-        "Acuerdo de alcance (Scope of Work) de 4 vinetas cortas en ingles para pegar en el chat antes de empezar: entregables exactos, 1 ronda de ajustes incluida, cambios extra se cotizan aparte, entrega del codigo tras confirmar pago.\n"
+        "Acuerdo de alcance (Scope of Work) de 4 vinetas cortas en ingles: entregables exactos, 1 ronda de ajustes incluida, extras se cotizan aparte, entrega tras confirmar pago.\n"
         "</MICRO_CONTRATO>\n\n"
         "<CODIGO>\n"
-        "Script completo, modular y limpio en Python 3.12 listo como base funcional para resolver el pedido, con manejo de errores, logging claro y exportacion ordenada.\n"
+        "Script base completo, modular y limpio en Python 3.12 listo como punto de partida funcional para resolver este proyecto, con manejo de errores y exportacion ordenada.\n"
         "</CODIGO>\n\n"
-        f"OFERTA DEL CLIENTE:\n{oferta}"
+        f"OFERTA:\n{oferta[:2600]}"
     )
 
-    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=36)
+    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=38)
     if not texto:
         return None
 
+    estrategia = extraer_etiqueta(texto, "ESTRATEGIA_PLATAFORMA")
     diag = extraer_etiqueta(texto, "DIAGNOSTICO")
     red_flags = extraer_etiqueta(texto, "RED_FLAGS")
     precios = extraer_etiqueta(texto, "PRECIOS")
@@ -202,7 +454,7 @@ def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", gua
     todos_pip, faltantes_pip = analizar_dependencias(codigo) if codigo else ([], [])
 
     dm_url = ""
-    if autor and autor.lower() not in ("[deleted]", "automoderator", "github", "hackernews"):
+    if plat == "Reddit" and autor and autor.lower() not in ("[deleted]", "automoderator", "github", "hackernews", "freelancer_client"):
         dm_url = f"https://www.reddit.com/message/compose/?to={quote(autor)}&subject={quote('Re: ' + (titulo or 'Project')[:65])}&message={quote(pitch_a[:380])}"
 
     ruta_borrador = ""
@@ -215,21 +467,25 @@ def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", gua
         carpeta_proj = os.path.join(
             ROOT_DIR,
             "proyectos",
-            f"{datetime.now().strftime('%Y%m%d_%H%M')}_{crear_slug(titulo or oferta.splitlines()[0])}",
+            f"{datetime.now().strftime('%Y%m%d_%H%M')}_{plat.lower()}_{crear_slug(titulo or oferta.splitlines()[0])}",
         )
         os.makedirs(carpeta_proj, exist_ok=True)
         with open(os.path.join(carpeta_proj, "script.py"), "w", encoding="utf-8") as f:
             f.write(codigo)
-        with open(os.path.join(carpeta_proj, "kit_cierre_apex.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(carpeta_proj, "kit_cierre_omni.txt"), "w", encoding="utf-8") as f:
             f.write(
-                f"CONFIANZA CLIENTE: {confianza}\nRED FLAGS: {red_flags}\n\nDIAGNOSTICO:\n{diag}\n\nPRECIOS:\n{precios}\n\n"
-                f"PITCH A (TECNICO):\n{pitch_a}\n\nPITCH B (CONSULTIVO):\n{pitch_b}\n\n"
+                f"PLATAFORMA: {plat} ({tipo_trabajo or 'auto'})\nCONFIANZA: {confianza}\n"
+                f"ESTRATEGIA: {estrategia}\nRED FLAGS: {red_flags}\n\n"
+                f"DIAGNOSTICO:\n{diag}\n\nPRECIOS:\n{precios}\n\n"
+                f"PITCH A:\n{pitch_a}\n\nPITCH B:\n{pitch_b}\n\n"
                 f"PREGUNTAS:\n{preguntas}\n\nMICRO-CONTRATO:\n{contrato}\n\n"
-                f"FOLLOWUP 24H:\n{followup}\n\nCOBRO:\n{cobro}\n"
+                f"FOLLOWUP:\n{followup}\n\nCOBRO:\n{cobro}\n"
             )
-        log_evento(f"Copiloto APEX genero kit + borrador ({'AST OK' if valido else 'Revisar'})")
+        log_evento(f"Copiloto OMNI ({plat}) genero kit + borrador ({'AST OK' if valido else 'Revisar'})")
 
     return {
+        "plataforma": plat,
+        "estrategia": estrategia,
         "confianza": confianza,
         "red_flags": red_flags,
         "diagnostico": diag,
@@ -250,11 +506,11 @@ def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", gua
     }
 
 def main() -> None:
-    print(f"\n{C.BOLD}{C.CYAN}=== MODULO B: COPILOTO APEX v12.0 (A/B + RED FLAGS + REFINADOR) ==={C.RESET}")
-    print("Opcion 1: Pega un LINK de Reddit (PC o App Movil /s/) y dale Enter.")
-    print("Opcion 2: Escribe #<ID> de tu CRM (ej. #4) y dale Enter.")
+    print(f"\n{C.BOLD}{C.CYAN}=== MODULO B: COPILOTO UNIVERSAL OMNI v13.0 ==={C.RESET}")
+    print("Opcion 1: Pega CUALQUIER LINK (Reddit, Freelancer, GitHub, HN, RemoteOK, WWR...) y Enter.")
+    print("Opcion 2: Escribe #<ID> de tu CRM (ej. #4) y Enter.")
     print("Opcion 3: Escribe REFINAR para mejorar tu borrador_cliente.py actual.")
-    print("Opcion 4: Pega el texto de la oferta, escribe FIN en linea nueva y dale Enter.\n")
+    print("Opcion 4: Pega el texto manual, escribe FIN en linea nueva y Enter.\n")
 
     primera = input(f"{C.GREEN}> {C.RESET}").strip()
     if not primera:
@@ -270,20 +526,24 @@ def main() -> None:
             print(f"\n{C.GREEN}[+] {r['resumen']} ({r['lineas']} lineas | {'AST OK' if r['ast_valido'] else 'Revisar'}){C.RESET}\n")
         return
 
-    autor_reddit = ""
-    titulo_reddit = ""
+    autor = ""
+    titulo = ""
+    plat = ""
+    tipo = ""
     if primera.startswith("#") and primera[1:].isdigit():
         print(f"{C.DIM}[*] Cargando lead {primera} desde tu CRM...{C.RESET}", flush=True)
-        oferta, autor_reddit, titulo_reddit = cargar_desde_crm(int(primera[1:]))
+        oferta, autor, titulo, plat, tipo = cargar_desde_crm_completo(int(primera[1:]))
         if not oferta:
             print(f"{C.RED}[!] No existe el lead {primera} en tu CRM.{C.RESET}")
             return
-    elif primera.startswith("http") and ("reddit.com" in primera or "redd.it" in primera):
-        print(f"{C.DIM}[*] Descargando post directo desde Reddit...{C.RESET}", flush=True)
-        oferta, autor_reddit, titulo_reddit = descargar_post_reddit(primera)
+    elif primera.startswith("http"):
+        plat_det = detectar_plataforma_url(primera)
+        print(f"{C.DIM}[*] Extrayendo oferta desde {plat_det}...{C.RESET}", flush=True)
+        oferta, autor, titulo, plat = descargar_oferta_universal(primera)
         if not oferta:
-            print("[!] Pega el texto manual del post mejor.")
+            print("[!] No pude leer ese link automatico. Pega el texto manual mejor.")
             return
+        print(f"{C.GREEN}[+] Oferta de {plat} descargada ({len(oferta)} chars).{C.RESET}\n")
     else:
         lineas = [primera]
         while True:
@@ -296,8 +556,8 @@ def main() -> None:
             lineas.append(linea)
         oferta = "\n".join(lineas).strip()
 
-    print(f"{C.CYAN}[*] Ejecutando motor Copiloto APEX...{C.RESET}", flush=True)
-    res = analizar_oferta_completo(oferta, autor=autor_reddit, titulo=titulo_reddit, guardar_archivos=True)
+    print(f"{C.CYAN}[*] Ejecutando Copiloto OMNI ({plat or 'Auto'})...{C.RESET}", flush=True)
+    res = analizar_oferta_completo(oferta, autor=autor, titulo=titulo, guardar_archivos=True, plataforma=plat, tipo_trabajo=tipo)
     if not res:
         print(f"{C.RED}[!] No se pudo generar respuesta en este momento.{C.RESET}")
         return
@@ -305,14 +565,15 @@ def main() -> None:
     copiado = copiar_al_portapapeles(res["pitch_a"])
 
     print("\n" + "=" * 72)
-    if res["confianza"]:
-        print(f"{C.MAGENTA}CLIENT TRUST RADAR:{C.RESET} {res['confianza']}")
-    if res["red_flags"]:
-        print(f"{C.YELLOW}ALERTAS / RED FLAGS:{C.RESET} {res['red_flags']}\n")
+    print(f"{C.MAGENTA}PLATAFORMA:{C.RESET} {res['plataforma']} | {res['confianza']}")
+    if res.get("estrategia"):
+        print(f"{C.CYAN}ESTRATEGIA:{C.RESET} {res['estrategia']}")
+    if res.get("red_flags"):
+        print(f"{C.YELLOW}RED FLAGS :{C.RESET} {res['red_flags']}\n")
     print(f"{C.BOLD}DIAGNOSTICO TECNICO:{C.RESET}\n{res['diagnostico']}\n")
     print(f"{C.BOLD}{C.GREEN}ESCALERA DE PRECIOS:{C.RESET}\n{res['precios']}\n")
     print("-" * 72)
-    print(f"{C.BOLD}{C.CYAN}PITCH A — DIRECTO TECNICO:{C.RESET}\n{res['pitch_a']}\n")
+    print(f"{C.BOLD}{C.CYAN}PITCH A — ADAPTADO A {res['plataforma'].upper()}:{C.RESET}\n{res['pitch_a']}\n")
     if copiado:
         print(f"{C.GREEN}[+] Pitch A copiado automaticamente al portapapeles (Ctrl+V)!{C.RESET}\n")
     print(f"{C.BOLD}{C.BLUE}PITCH B — CONSULTIVO:{C.RESET}\n{res['pitch_b']}\n")
@@ -333,7 +594,7 @@ def main() -> None:
             if input("Quieres instalarlos automaticamente ahora? [s/N]: ").strip().lower() == "s":
                 subprocess.run([sys.executable, "-m", "pip", "install", *res["faltantes_pip"]])
         elif res["todos_pip"]:
-            print(f"{C.GREEN}[+] Todas las librerias ({', '.join(res['todos_pip'])}) ya estan instaladas!{C.RESET}")
+            print(f"{C.GREEN}[+] Librerias ({', '.join(res['todos_pip'])}) ya instaladas!{C.RESET}")
         print()
 
 if __name__ == "__main__":
