@@ -4,6 +4,7 @@ import sys
 import html
 import time
 import random
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -34,20 +35,23 @@ from core_ia import (
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# User-Agent de navegador real para evitar HTTP 403 inmediato en Reddit
 REDDIT_HEADERS = {
-    "User-Agent": "python:zerotouch-overdrive:v12.5 (by /u/zerotouch_freelance)",
-    "Accept": "application/json,application/atom+xml,text/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
 GITHUB_HEADERS = {
-    "User-Agent": "ZeroTouchOverdrive/12.5",
+    "User-Agent": "ZeroTouchOverdrive/12.6",
     "Accept": "application/vnd.github+json",
 }
 if os.getenv("GITHUB_TOKEN"):
     GITHUB_HEADERS["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
 
-# 14 subreddits agrupados en 3 lotes Multireddit (-75% requests = menos 429 y 3x mas rapido)
+# Semaforo para que rss2json nunca reciba rafagas simultaneas ni devuelva ERROR
+RSS2JSON_LOCK = threading.Lock()
+
 MULTIREDDIT_BATCHES = [
     ("Batch-Core", ["forhire", "slavelabour", "hiring", "freelance_forhire", "DoneDirtCheap"]),
     ("Batch-Tech", ["Jobs4Bitcoins", "Jobbit", "WebDevClassifieds", "requestabot", "ProgrammingTasks"]),
@@ -88,7 +92,6 @@ REGEX_SPAM = re.compile(
 )
 REGEX_HN_DESCARTE = re.compile(r"\b(seeking\s+work|available\s+for\s+hire|for\s+hire|looking\s+for\s+work)\b", re.IGNORECASE)
 
-# Motor de puntaje tecnico local (0 tokens gastados en diseño/video/redaccion/data entry)
 REGEX_TECH_FUERTE = re.compile(
     r"\b(python|scrap\w*|selenium|playwright|beautifulsoup|bs4|puppeteer|telegram|discord|"
     r"webhook|apis?|rest\s*api|graphql|json|csv|sql|sqlite|postgres\w*|mysql|mongodb|pandas|"
@@ -304,14 +307,17 @@ def procesar_child_reddit(d: dict, cfg: dict, fuente_forzada: str | None = None,
     if not sub and fuente_forzada:
         sub = fuente_forzada.replace("r/", "")
 
+    perm = d.get("permalink") or ""
+    link = f"https://www.reddit.com{perm}" if perm.startswith("/") else (d.get("full_link") or d.get("url") or "")
+
     return _evaluar_post_reddit_comun(
-        post_id=d.get("name") or d.get("id") or d.get("permalink"),
+        post_id=d.get("name") or d.get("id") or link,
         sub=sub,
         autor=d.get("author") or "",
         titulo=(d.get("title") or "").strip(),
         cuerpo=(d.get("selftext") or "")[:1600],
         flair=(d.get("link_flair_text") or "").strip(),
-        link=f"https://www.reddit.com{d.get('permalink', '')}",
+        link=link,
         edad_min=int(edad_seg // 60),
         comentarios=safe_int(d.get("num_comments", 0), 0),
         cfg=cfg,
@@ -385,16 +391,32 @@ def parsear_atom_reddit(xml_text: str, sub_default: str, cfg: dict, stats_descar
             resultados.append(item)
     return resultados
 
+def consultar_rss2json_seguro(rss_url: str) -> list | None:
+    api_url = f"https://api.rss2json.com/v1/api.json?rss_url={quote(rss_url, safe='')}"
+    with RSS2JSON_LOCK:
+        time.sleep(0.55)
+        try:
+            r = SESSION.get(api_url, headers={"User-Agent": REDDIT_HEADERS["User-Agent"]}, timeout=12)
+            if r.status_code == 200 and r.json().get("status") == "ok":
+                return r.json().get("items", [])
+        except Exception:
+            pass
+    return None
+
+def extraer_sub_de_link(link: str, default_sub: str = "") -> str:
+    m = re.search(r"/r/([^/]+)/", link or "", re.IGNORECASE)
+    return m.group(1) if m else default_sub
+
 def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tuple[list, dict]:
     time.sleep(random.uniform(0.08, 0.30))
     combo = "+".join(subs)
     stats_desc: dict[str, int] = {}
     items: list = []
 
-    # Nivel 1: Multireddit JSON directo (1 sola llamada para 4-5 subreddits, con flairs + comentarios exactos)
+    # Nivel 1: Multireddit JSON directo con User-Agent de navegador real
     for host in ("https://www.reddit.com", "https://old.reddit.com"):
         try:
-            r = SESSION.get(f"{host}/r/{combo}/new.json?limit=45&raw_json=1", headers=REDDIT_HEADERS, timeout=11)
+            r = SESSION.get(f"{host}/r/{combo}/new.json?limit=45&raw_json=1", headers=REDDIT_HEADERS, timeout=10)
             if r.status_code == 200:
                 children = r.json().get("data", {}).get("children", [])
                 for child in children:
@@ -404,15 +426,13 @@ def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tu
                 tech_n = sum(1 for x in items if x["es_tech"])
                 print(f"{C.DIM}[OK] {nombre_lote:<16} (JSON {len(children):2d} raw) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
                 return items, {"fuente": nombre_lote, "modo": "JSON", "ok": True, "bruto": len(children), "tech": tech_n, "descartes": stats_desc}
-            if r.status_code == 429:
-                time.sleep(1.2)
         except Exception:
             pass
 
-    # Nivel 2: Multireddit Atom XML nativo (en tiempo real, sin intermediarios)
+    # Nivel 2: Multireddit Atom XML nativo
     for host in ("https://www.reddit.com", "https://old.reddit.com"):
         try:
-            r = SESSION.get(f"{host}/r/{combo}/new/.rss", headers=REDDIT_HEADERS, timeout=11)
+            r = SESSION.get(f"{host}/r/{combo}/new/.rss", headers=REDDIT_HEADERS, timeout=10)
             if r.status_code == 200 and "<entry>" in r.text:
                 items = parsear_atom_reddit(r.text, subs[0], cfg, stats_descarte=stats_desc)
                 tech_n = sum(1 for x in items if x["es_tech"])
@@ -421,36 +441,74 @@ def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tu
         except Exception:
             pass
 
-    # Nivel 3: Fallback individual via rss2json solo si Reddit bloqueo directo el lote completo
+    # Nivel 3: PullPush API (espejo Reddit sin 403)
+    try:
+        pp_url = f"https://api.pullpush.io/reddit/search/submission/?subreddit={quote(','.join(subs))}&size=45&sort=desc"
+        r = SESSION.get(pp_url, headers={"User-Agent": REDDIT_HEADERS["User-Agent"]}, timeout=12)
+        if r.status_code == 200:
+            raw_list = r.json().get("data", [])
+            if raw_list:
+                for d in raw_list:
+                    it = procesar_child_reddit(d, cfg, stats_descarte=stats_desc)
+                    if it:
+                        items.append(it)
+                tech_n = sum(1 for x in items if x["es_tech"])
+                print(f"{C.CYAN}[OK] {nombre_lote:<16} (PullPush {len(raw_list):2d}) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
+                return items, {"fuente": nombre_lote, "modo": "PullPush", "ok": True, "bruto": len(raw_list), "tech": tech_n, "descartes": stats_desc}
+    except Exception:
+        pass
+
+    # Nivel 4: Multireddit via rss2json (1 sola peticion serializada con Lock)
+    raw_multi = consultar_rss2json_seguro(f"https://www.reddit.com/r/{combo}/new/.rss")
+    if raw_multi is not None:
+        for raw in raw_multi:
+            link = raw.get("link", "")
+            sub_real = extraer_sub_de_link(link, subs[0])
+            it = _evaluar_post_reddit_comun(
+                post_id=raw.get("guid", link),
+                sub=sub_real,
+                autor=(raw.get("author") or "").replace("/u/", "").strip(),
+                titulo=(raw.get("title") or "").strip(),
+                cuerpo=limpiar_html(raw.get("description", "")),
+                flair="",
+                link=link,
+                edad_min=None,
+                comentarios=None,
+                cfg=cfg,
+                es_global=False,
+                stats_descarte=stats_desc,
+            )
+            if it:
+                items.append(it)
+        tech_n = sum(1 for x in items if x["es_tech"])
+        print(f"{C.DIM}[OK] {nombre_lote:<16} (RSS-Multi {len(raw_multi):2d}) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
+        return items, {"fuente": nombre_lote, "modo": "RSS-Multi", "ok": True, "bruto": len(raw_multi), "tech": tech_n, "descartes": stats_desc}
+
+    # Nivel 5: Fallback individual serializado en rss2json
     bruto_fb = 0
     ok_subs = 0
     for sub in subs:
-        try:
-            api_url = f"https://api.rss2json.com/v1/api.json?rss_url=https://www.reddit.com/r/{sub}/new/.rss"
-            r = SESSION.get(api_url, headers=REDDIT_HEADERS, timeout=10)
-            if r.status_code == 200 and r.json().get("status") == "ok":
-                ok_subs += 1
-                raw_items = r.json().get("items", [])[:12]
-                bruto_fb += len(raw_items)
-                for raw in raw_items:
-                    it = _evaluar_post_reddit_comun(
-                        post_id=raw.get("guid", raw.get("link", "")),
-                        sub=sub,
-                        autor=(raw.get("author") or "").replace("/u/", "").strip(),
-                        titulo=(raw.get("title") or "").strip(),
-                        cuerpo=limpiar_html(raw.get("description", "")),
-                        flair="",
-                        link=raw.get("link", ""),
-                        edad_min=None,
-                        comentarios=None,
-                        cfg=cfg,
-                        es_global=False,
-                        stats_descarte=stats_desc,
-                    )
-                    if it:
-                        items.append(it)
-        except Exception:
-            pass
+        raw_items = consultar_rss2json_seguro(f"https://www.reddit.com/r/{sub}/new/.rss")
+        if raw_items is not None:
+            ok_subs += 1
+            bruto_fb += len(raw_items)
+            for raw in raw_items[:12]:
+                it = _evaluar_post_reddit_comun(
+                    post_id=raw.get("guid", raw.get("link", "")),
+                    sub=sub,
+                    autor=(raw.get("author") or "").replace("/u/", "").strip(),
+                    titulo=(raw.get("title") or "").strip(),
+                    cuerpo=limpiar_html(raw.get("description", "")),
+                    flair="",
+                    link=raw.get("link", ""),
+                    edad_min=None,
+                    comentarios=None,
+                    cfg=cfg,
+                    es_global=False,
+                    stats_descarte=stats_desc,
+                )
+                if it:
+                    items.append(it)
 
     tech_n = sum(1 for x in items if x["es_tech"])
     modo_fb = f"RSS-FB ({ok_subs}/{len(subs)})" if ok_subs else "ERROR"
@@ -458,12 +516,14 @@ def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tu
     print(f"{color}[{'OK' if ok_subs else '!'}] {nombre_lote:<16} ({modo_fb}) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
     return items, {"fuente": nombre_lote, "modo": modo_fb, "ok": ok_subs > 0, "bruto": bruto_fb, "tech": tech_n, "descartes": stats_desc}
 
-def buscar_reddit_global(query_str: str, etiqueta: str, cfg: dict) -> tuple[list, dict]:
+def buscar_reddit_global(query_str: str, query_simple: str, etiqueta: str, cfg: dict) -> tuple[list, dict]:
     items = []
     stats_desc: dict[str, int] = {}
-    url = f"https://www.reddit.com/search.json?q={quote(query_str)}&sort=new&t=day&limit=25&raw_json=1"
+
+    # Nivel 1: Reddit Search JSON con navegador UA
     try:
-        r = SESSION.get(url, headers=REDDIT_HEADERS, timeout=12)
+        url = f"https://www.reddit.com/search.json?q={quote(query_str)}&sort=new&t=day&limit=25&raw_json=1"
+        r = SESSION.get(url, headers=REDDIT_HEADERS, timeout=11)
         if r.status_code == 200:
             children = r.json().get("data", {}).get("children", [])
             for child in children:
@@ -472,18 +532,59 @@ def buscar_reddit_global(query_str: str, etiqueta: str, cfg: dict) -> tuple[list
                     items.append(item)
             print(f"{C.CYAN}[OK] {etiqueta:<16} (JSON {len(children):2d} raw) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
             return items, {"fuente": etiqueta, "modo": "JSON", "ok": True, "bruto": len(children), "tech": len(items), "descartes": stats_desc}
-        print(f"{C.YELLOW}[!] {etiqueta:<16} HTTP {r.status_code}{C.RESET}", flush=True)
-        return items, {"fuente": etiqueta, "modo": f"HTTP {r.status_code}", "ok": False, "bruto": 0, "tech": 0, "descartes": stats_desc}
-    except Exception as e:
-        print(f"{C.YELLOW}[!] Error {etiqueta}: {e}{C.RESET}", flush=True)
-        return items, {"fuente": etiqueta, "modo": "ERROR", "ok": False, "bruto": 0, "tech": 0, "descartes": stats_desc}
+    except Exception:
+        pass
+
+    # Nivel 2: PullPush Search API (sin 403)
+    try:
+        pp_url = f"https://api.pullpush.io/reddit/search/submission/?q={quote(query_simple)}&size=30&sort=desc"
+        r = SESSION.get(pp_url, headers={"User-Agent": REDDIT_HEADERS["User-Agent"]}, timeout=12)
+        if r.status_code == 200:
+            raw_list = r.json().get("data", [])
+            for d in raw_list:
+                item = procesar_child_reddit(d, cfg, es_global=True, stats_descarte=stats_desc)
+                if item and item["es_tech"]:
+                    items.append(item)
+            print(f"{C.CYAN}[OK] {etiqueta:<16} (PullPush {len(raw_list):2d}) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
+            return items, {"fuente": etiqueta, "modo": "PullPush", "ok": True, "bruto": len(raw_list), "tech": len(items), "descartes": stats_desc}
+    except Exception:
+        pass
+
+    # Nivel 3: Reddit Search RSS via rss2json (URL-encoded + Lock)
+    rss_search = f"https://www.reddit.com/search.rss?q={quote(query_str)}&sort=new&t=day"
+    raw_items = consultar_rss2json_seguro(rss_search)
+    if raw_items is not None:
+        for raw in raw_items:
+            link = raw.get("link", "")
+            sub_real = extraer_sub_de_link(link, "Reddit")
+            item = _evaluar_post_reddit_comun(
+                post_id=raw.get("guid", link),
+                sub=sub_real,
+                autor=(raw.get("author") or "").replace("/u/", "").strip(),
+                titulo=(raw.get("title") or "").strip(),
+                cuerpo=limpiar_html(raw.get("description", "")),
+                flair="",
+                link=link,
+                edad_min=None,
+                comentarios=None,
+                cfg=cfg,
+                es_global=True,
+                stats_descarte=stats_desc,
+            )
+            if item and item["es_tech"]:
+                items.append(item)
+        print(f"{C.CYAN}[OK] {etiqueta:<16} (RSS-Search {len(raw_items):2d}) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
+        return items, {"fuente": etiqueta, "modo": "RSS-Search", "ok": True, "bruto": len(raw_items), "tech": len(items), "descartes": stats_desc}
+
+    print(f"{C.YELLOW}[!] {etiqueta:<16} Sin respuesta (Reddit 403 + backups ocupados){C.RESET}", flush=True)
+    return items, {"fuente": etiqueta, "modo": "BLOQUEADO", "ok": False, "bruto": 0, "tech": 0, "descartes": stats_desc}
 
 def buscar_github_bounties() -> tuple[list, dict]:
     items = []
     ahora = datetime.now(timezone.utc)
-    desde = (ahora - timedelta(days=4)).strftime("%Y-%m-%d")
-    q = quote(f"is:issue is:open (label:bounty OR algora) created:>={desde} (python OR scraper OR bot OR automation)")
-    url = f"https://api.github.com/search/issues?q={q}&sort=created&order=desc&per_page=10"
+    desde = (ahora - timedelta(days=7)).strftime("%Y-%m-%d")
+    q = quote(f"is:issue is:open (label:bounty OR algora) created:>={desde} (python OR scraper OR bot OR automation OR api)")
+    url = f"https://api.github.com/search/issues?q={q}&sort=created&order=desc&per_page=15"
     try:
         r = SESSION.get(url, headers=GITHUB_HEADERS, timeout=12)
         if r.status_code == 200:
@@ -491,7 +592,8 @@ def buscar_github_bounties() -> tuple[list, dict]:
             for iss in crudos:
                 titulo = iss.get("title", "")
                 cuerpo = (iss.get("body") or "")[:1400]
-                combinado = f"{titulo} {cuerpo}"
+                labels_txt = " ".join(str(lb.get("name", "")) for lb in (iss.get("labels") or []))
+                combinado = f"{titulo} {labels_txt} {cuerpo}"
                 dinero_local = extraer_presupuesto_usd(combinado)
                 if dinero_local <= 0:
                     continue
@@ -507,10 +609,10 @@ def buscar_github_bounties() -> tuple[list, dict]:
                     "id": f"gh_bounty_{iss.get('id')}",
                     "fuente": "GitHub Bounty",
                     "autor": "github",
-                    "titulo": f"[Bounty] {titulo}",
+                    "titulo": f"[Bounty ${int(dinero_local)}] {titulo}",
                     "titulo_norm": normalizar_titulo(titulo),
                     "titulo_palabras": titulo_palabras_limpio(titulo),
-                    "texto": cuerpo,
+                    "texto": f"Labels: {labels_txt}\n{cuerpo}"[:1500],
                     "link": iss.get("html_url", ""),
                     "es_tech": True,
                     "tech_score": 8,
@@ -532,12 +634,12 @@ def buscar_github_bounties() -> tuple[list, dict]:
 def buscar_hackernews_freelance() -> tuple[list, dict]:
     items = []
     ahora_ts = time.time()
-    hace_48h = int(ahora_ts - 48 * 3600)
+    hace_7d = int(ahora_ts - 7 * 86400)
     vistos_hn = set()
     bruto = 0
     ok_alg = False
-    for q in ("freelance python automation", "hiring python scraping bot"):
-        url = f"https://hn.algolia.com/api/v1/search_by_date?query={quote(q)}&tags=comment&numericFilters=created_at_i>{hace_48h}&hitsPerPage=8"
+    for q in ("seeking freelancer python", "hiring python scraper"):
+        url = f"https://hn.algolia.com/api/v1/search_by_date?query={quote(q)}&tags=comment&numericFilters=created_at_i>{hace_7d}&hitsPerPage=10"
         try:
             r = SESSION.get(url, timeout=10)
             if r.status_code == 200:
@@ -588,13 +690,13 @@ def buscar_hackernews_freelance() -> tuple[list, dict]:
 def recolectar_todo(cfg: dict) -> tuple[list, dict]:
     ofertas_raw = []
     detalle_fuentes = []
-    q_global_1 = '("Hiring" OR "looking to hire" OR "will pay") (python OR scraper OR scraping OR selenium OR playwright OR csv)'
-    q_global_2 = '("Hiring" OR "looking to hire" OR "will pay") (telegram OR discord OR bot OR automation OR shopify OR n8n OR zapier)'
+    q_g1 = '("Hiring" OR "looking to hire" OR "will pay") (python OR scraper OR scraping OR selenium OR playwright)'
+    q_g2 = '("Hiring" OR "looking to hire" OR "will pay") (telegram OR discord OR bot OR automation OR shopify OR n8n)'
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         futuros = [pool.submit(obtener_lote_multireddit, nom, subs, cfg) for nom, subs in MULTIREDDIT_BATCHES]
-        futuros.append(pool.submit(buscar_reddit_global, q_global_1, "Global-Python", cfg))
-        futuros.append(pool.submit(buscar_reddit_global, q_global_2, "Global-Bots", cfg))
+        futuros.append(pool.submit(buscar_reddit_global, q_g1, "hiring python scraper", "Global-Python", cfg))
+        futuros.append(pool.submit(buscar_reddit_global, q_g2, "hiring automation bot", "Global-Bots", cfg))
         futuros.append(pool.submit(buscar_github_bounties))
         futuros.append(pool.submit(buscar_hackernews_freelance))
         for fut in as_completed(futuros):
@@ -605,7 +707,6 @@ def recolectar_todo(cfg: dict) -> tuple[list, dict]:
             except Exception as e:
                 detalle_fuentes.append({"fuente": "desconocida", "modo": f"ERR {e}", "ok": False, "bruto": 0, "tech": 0, "descartes": {}})
 
-    # Priorizar por competencia baja, presupuesto real, puntaje tecnico y frescura
     ofertas_raw.sort(
         key=lambda x: (x.get("comp_bonus", 0), x.get("dinero_local", 0) > 0, x.get("tech_score", 0), -(x.get("edad_min") or 999)),
         reverse=True,
@@ -796,7 +897,7 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
         pendientes = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('nuevo', 'contactado', 'negociando')").fetchone()[0]
 
         msg = (
-            f"<b>📊 RESUMEN ZEROTOUCH v12.5 ({hoy})</b>\n\n"
+            f"<b>📊 RESUMEN ZEROTOUCH v12.6 ({hoy})</b>\n\n"
             f"🛡️ <b>Basura bloqueada sin IA:</b> {desc} (~{t_ah:,} tokens ahorrados)\n"
             f"🤖 <b>Ofertas analizadas hoy:</b> {ev} (~{t_us:,} tokens usados)\n"
             f"⚡ <b>Alertas enviadas hoy:</b> {al}\n"
@@ -815,9 +916,9 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
     max_ia = max(1, safe_int(cfg.get("max_ia_por_ciclo", 16), 16))
     t0 = time.time()
     hora = datetime.now().strftime("%H:%M:%S")
-    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.5"
+    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.6"
     log_evento(f"Iniciando escaneo {etiqueta_modo}")
-    print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar {etiqueta_modo} (3 Multireddits = 14 Subs + 2 Global + Bounties + HN)...{C.RESET}", flush=True)
+    print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar {etiqueta_modo} (Anti-403 + PullPush + Multireddit + Bounties + HN)...{C.RESET}", flush=True)
 
     conn = preparar_db()
     descartados_no_tech = 0
@@ -831,7 +932,6 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
     candidatas_preview = []
 
     try:
-        # Carga O(1) en memoria de vistos (1 sola query en lugar de 150)
         filas_v = conn.execute("SELECT post_id, titulo_norm, titulo_palabras FROM vistos ORDER BY ts DESC LIMIT 2500").fetchall()
         vistos_ids = {r[0] for r in filas_v if r[0]}
         vistos_norms = {r[1] for r in filas_v if r[1]}
@@ -925,7 +1025,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
         if dry_run:
             resumen_txt = f"DRY-RUN en {dur}s | Fuentes: {f_ok}/{f_tot} | Bruto: {telemetria['bruto']} | Nuevas candidatas tech: {len(candidatas_preview)} | Bloqueados 0-tokens: {total_desc}"
         else:
-            resumen_txt = f"Ciclo v12.5 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
+            resumen_txt = f"Ciclo v12.6 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
         log_evento(resumen_txt)
         print(f"{C.GREEN}{resumen_txt}{C.RESET}", flush=True)
         if dry_run and candidatas_preview:
@@ -955,7 +1055,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
 def modo_sniper() -> None:
     cfg = cargar_config()
     intervalo = max(45, safe_int(cfg.get("intervalo_sniper_seg", 70), 70))
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.5 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.6 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
     print(f"{C.DIM}Minimiza esta ventana mientras usas tu PC. Presiona Ctrl+C para salir.{C.RESET}")
     ciclo_n = 0
     try:
