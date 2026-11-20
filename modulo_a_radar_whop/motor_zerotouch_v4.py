@@ -35,52 +35,82 @@ TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 REDDIT_HEADERS = {
-    "User-Agent": "python:zerotouch-apex:v12.0 (by /u/zerotouch_freelance)",
+    "User-Agent": "python:zerotouch-overdrive:v12.5 (by /u/zerotouch_freelance)",
     "Accept": "application/json,application/atom+xml,text/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 GITHUB_HEADERS = {
-    "User-Agent": "ZeroTouchApex/12.0",
+    "User-Agent": "ZeroTouchOverdrive/12.5",
     "Accept": "application/vnd.github+json",
 }
 if os.getenv("GITHUB_TOKEN"):
     GITHUB_HEADERS["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
 
-SUBREDDITS = [
-    "forhire",
-    "slavelabour",
-    "hiring",
-    "freelance_forhire",
-    "DoneDirtCheap",
-    "Jobs4Bitcoins",
-    "Jobbit",
-    "WebDevClassifieds",
-    "requestabot",
-    "ProgrammingTasks",
-    "PythonJobs",
-    "automate",
+# 14 subreddits agrupados en 3 lotes Multireddit (-75% requests = menos 429 y 3x mas rapido)
+MULTIREDDIT_BATCHES = [
+    ("Batch-Core", ["forhire", "slavelabour", "hiring", "freelance_forhire", "DoneDirtCheap"]),
+    ("Batch-Tech", ["Jobs4Bitcoins", "Jobbit", "WebDevClassifieds", "requestabot", "ProgrammingTasks"]),
+    ("Batch-Niche", ["PythonJobs", "automate", "webscraping", "Discord_Bots"]),
 ]
 
 SUBS_SIN_TAG_OBLIGATORIO = {"hiring", "requestabot", "programmingtasks", "pythonjobs", "automate"}
+SUBS_NICHO_ESTRICTO = {"webscraping", "discord_bots"}
+SUBS_DEV_BONUS = {"pythonjobs", "programmingtasks", "requestabot", "webscraping", "discord_bots"}
+SUBS_BLACKLIST = {
+    "signupsforpay", "referrals", "beermoney", "beermoneyglobal", "freebies",
+    "borrow", "assistance", "homeworkhelp", "domyhomework", "essaywriting",
+    "cryptomoonshots", "airdrops", "dirtysnapchat", "onlyfansreviews",
+}
 
-REGEX_DESCARTAR = re.compile(r"(\[|\()\s*(for\s*hire|forhire|offer)\s*(\]|\))", re.IGNORECASE)
-REGEX_ACEPTAR = re.compile(r"((\[|\()\s*(hiring|task|paid|request)\s*(\]|\))|^hiring\b|^\[h\])", re.IGNORECASE)
+REGEX_DESCARTAR = re.compile(
+    r"((\[|\()\s*(for\s*hire|forhire|offer|selling)\s*(\]|\))|^\s*(for\s*hire|offer)\b|\bavailable\s+for\s+hire\b)",
+    re.IGNORECASE,
+)
+REGEX_CERRADO = re.compile(
+    r"((\[|\()\s*(closed|filled|completed|expired|found|hired|taken)\s*(\]|\))|\b(position\s+filled|no\s+longer\s+needed|closed|completed)\b)",
+    re.IGNORECASE,
+)
+REGEX_ACEPTAR = re.compile(
+    r"((\[|\()\s*(hiring|task|paid|request)\s*(\]|\))|^\s*(hiring|task|paid)\b|^\[h\]|\bhiring\b)",
+    re.IGNORECASE,
+)
 REGEX_GLOBAL_HIRING = re.compile(
     r"((\[|\()\s*(hiring|task|paid|request)\s*(\]|\))|"
-    r"\b(looking\s+to\s+hire|need\s+a\s+(python|dev|developer|freelancer|scraper|bot)|"
-    r"will\s+pay|paying\s+\$?\d+|hire\s+someone\s+to|budget\s*(is|:)?\s*\$?\d+)\b)",
+    r"\b(looking\s+to\s+hire|need\s+a\s+(python|dev|developer|freelancer|scraper|bot|programmer)|"
+    r"will\s+pay|paying\s+\$?\d+|hire\s+someone\s+to|budget\s*(is|:)?\s*\$?\d+|paid\s+(task|project|gig))\b)",
     re.IGNORECASE,
 )
 REGEX_SPAM = re.compile(
     r"\b(kyc|referral|sign\s*up\s*bonus|verify\s*account|upvote|google\s*review|"
-    r"trustpilot|onlyfans|chatter|dm\s*on\s*whatsapp|quick\s*\$[1-5]\b|clickworker|survey|betting\s*account)\b",
+    r"trustpilot|onlyfans|chatter|dm\s*on\s*whatsapp|quick\s*\$[1-5]\b|clickworker|survey|betting\s*account|create\s+accounts?)\b",
     re.IGNORECASE,
 )
-REGEX_TECH = re.compile(
-    r"\b(python|scrap\w*|bot\w*|script\w*|automat\w*|api\w*|selenium|playwright|beautifulsoup|"
-    r"telegram|discord|excel|csv|json|sql|database|data|extract\w*|crawl\w*|web\w*|site|app|"
-    r"software|cod\w+|program\w*|dev\w*|backend|frontend|react|node|php|wordpress|shopify|"
-    r"plugin|extension|webhook|ai|llm|gpt|gemini|bug|fix|linux|server|deploy|n8n|zapier|make\.com|airtable)\b",
+REGEX_HN_DESCARTE = re.compile(r"\b(seeking\s+work|available\s+for\s+hire|for\s+hire|looking\s+for\s+work)\b", re.IGNORECASE)
+
+# Motor de puntaje tecnico local (0 tokens gastados en diseño/video/redaccion/data entry)
+REGEX_TECH_FUERTE = re.compile(
+    r"\b(python|scrap\w*|selenium|playwright|beautifulsoup|bs4|puppeteer|telegram|discord|"
+    r"webhook|apis?|rest\s*api|graphql|json|csv|sql|sqlite|postgres\w*|mysql|mongodb|pandas|"
+    r"openpyxl|fastapi|flask|django|nodejs|node\.js|typescript|javascript|react|nextjs|next\.js|"
+    r"php|laravel|n8n|zapier|make\.com|airtable|apps\s*script|chrome\s*extension|browser\s*extension|"
+    r"crawler|crawling|automat\w*|script\w*|bots?|docker|linux|vps|deploy|shopify\s*api|"
+    r"woocommerce|regex|ocr|llm|openai|gemini\s*api|langchain|github\s*actions?)\b",
+    re.IGNORECASE,
+)
+REGEX_TECH_MEDIO = re.compile(
+    r"\b(program\w*|develop\w*|dev|backend|frontend|fullstack|full-stack|database|software|"
+    r"coding|code|bug|debug|excel|vba|macro|shopify|wordpress|plugin|saas|mvp|dashboard|"
+    r"github|extract\w*|parse|parsing|integrat\w*)\b",
+    re.IGNORECASE,
+)
+REGEX_NO_TECH_PENALIDAD = re.compile(
+    r"\b(video\s*edit\w*|thumbnail\w*|photoshop|illustrator|after\s*effects|premiere|capcut|"
+    r"logo\s*design|graphic\s*design|voice\s*over|voiceover|ugc\s*creator|tiktok\s*video|"
+    r"instagram\s*reel|copywrit\w*|blog\s*post|ghostwrit\w*|essay|homework|assignment|"
+    r"exam\s*help|tutor\w*|virtual\s*assistant|cold\s*call\w*|appointment\s*setter|"
+    r"data\s*entry|transcrib\w*|translat\w*|resume\s*writ\w*|cover\s*letter|social\s*media\s*manager|"
+    r"seo\s*backlinks?|guest\s*post)\b",
     re.IGNORECASE,
 )
 REGEX_URGENTE = re.compile(r"\b(urgent|asap|today|right\s*now|quick\s*job|within\s*\d+\s*hours?|immediately)\b", re.IGNORECASE)
@@ -89,7 +119,8 @@ REGEX_BALLENA = re.compile(r"\b(ongoing|retainer|long[\s-]*term|monthly|saas|age
 def limpiar_html(raw_html: str) -> str:
     if not raw_html:
         return ""
-    texto = BeautifulSoup(raw_html, "html.parser").get_text(separator=" ", strip=True)
+    desescapado = html.unescape(raw_html)
+    texto = BeautifulSoup(desescapado, "html.parser").get_text(separator=" ", strip=True)
     return re.sub(r"\s+", " ", texto)[:1600]
 
 def normalizar_titulo(titulo: str) -> str:
@@ -100,6 +131,16 @@ def titulo_palabras_limpio(titulo: str) -> str:
     limpio = re.sub(r"\[[^\]]*\]|\([^\)]*\)", " ", titulo.lower())
     return " ".join(re.findall(r"[a-z0-9]{3,}", limpio))[:180]
 
+def puntuar_relevancia_local(titulo: str, texto: str, sub: str = "") -> tuple[int, bool]:
+    combinado = f"{titulo} {texto}"
+    fuertes = {m.lower() for m in REGEX_TECH_FUERTE.findall(combinado)}
+    medios = {m.lower() for m in REGEX_TECH_MEDIO.findall(combinado)}
+    penalidades = {m.lower() for m in REGEX_NO_TECH_PENALIDAD.findall(combinado)}
+    puntaje = (len(fuertes) * 3) + len(medios) - (len(penalidades) * 3)
+    if sub.lower() in SUBS_DEV_BONUS and not penalidades:
+        puntaje += 2
+    return puntaje, (puntaje >= 2)
+
 def detectar_prioridad_tag(combinado: str, dinero_local: float) -> str:
     tags = []
     if dinero_local >= 250 or REGEX_BALLENA.search(combinado):
@@ -109,15 +150,21 @@ def detectar_prioridad_tag(combinado: str, dinero_local: float) -> str:
     return " · ".join(tags)
 
 def calcular_competencia(edad_min: int | None, comentarios: int | None) -> tuple[str, int]:
-    if edad_min is None or comentarios is None:
+    if edad_min is None and comentarios is None:
         return "🔎 RSS en vivo", 0
-    if edad_min <= 20 and comentarios <= 2:
-        return f"🎯 SANGRE FRESCA ({edad_min}m | {comentarios} com.)", 2
-    if comentarios <= 5:
-        return f"🟢 Baja ({edad_min}m | {comentarios} com.)", 1
-    if comentarios <= 12:
-        return f"🟡 Media ({edad_min}m | {comentarios} com.)", 0
-    return f"🔴 Alta ({edad_min}m | {comentarios} com.)", -1
+    if edad_min is not None and comentarios is None:
+        if edad_min <= 20:
+            return f"⚡ RSS Fresco ({edad_min}m)", 1
+        return f"⚡ RSS Nativo ({edad_min}m)", 0
+    edad_m = edad_min if edad_min is not None else 999
+    com = comentarios if comentarios is not None else 0
+    if edad_m <= 20 and com <= 2:
+        return f"🎯 SANGRE FRESCA ({edad_m}m | {com} com.)", 2
+    if com <= 5:
+        return f"🟢 Baja ({edad_m}m | {com} com.)", 1
+    if com <= 12:
+        return f"🟡 Media ({edad_m}m | {com} com.)", 0
+    return f"🔴 Alta ({edad_m}m | {com} com.)", -1
 
 def construir_dm_reddit(autor: str, titulo: str, pitch: str) -> str | None:
     if not autor or autor.lower() in ("[deleted]", "automoderator", "none", "github", "hackernews"):
@@ -166,56 +213,113 @@ def pasa_blacklist_custom(texto: str, extras) -> bool:
     low = texto.lower()
     return not any(str(w).strip().lower() in low for w in extras if str(w).strip())
 
-def procesar_child_reddit(d: dict, cfg: dict, fuente_forzada: str | None = None, es_global: bool = False) -> dict | None:
-    ahora = time.time()
-    max_h = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
-    creado = d.get("created_utc", ahora)
-    edad_seg = max(0, ahora - creado)
-    if edad_seg > (max_h * 3600):
+def _evaluar_post_reddit_comun(
+    post_id: str,
+    sub: str,
+    autor: str,
+    titulo: str,
+    cuerpo: str,
+    flair: str,
+    link: str,
+    edad_min: int | None,
+    comentarios: int | None,
+    cfg: dict,
+    es_global: bool = False,
+    stats_descarte: dict | None = None,
+) -> dict | None:
+    def _contar(razon: str) -> None:
+        if stats_descarte is not None:
+            stats_descarte[razon] = stats_descarte.get(razon, 0) + 1
+
+    sub_low = (sub or "").lower().strip()
+    if not titulo or sub_low in SUBS_BLACKLIST:
+        _contar("spam_basura")
         return None
-    titulo = (d.get("title") or "").strip()
-    cuerpo = (d.get("selftext") or "")[:1600]
-    sub = d.get("subreddit") or ""
-    fuente = fuente_forzada or (f"r/{sub}" if sub else "Reddit")
-    combinado = f"{titulo} {cuerpo}"
-    if not titulo or REGEX_DESCARTAR.search(titulo) or REGEX_SPAM.search(combinado):
-        return None
-    if not pasa_blacklist_custom(combinado, cfg.get("palabras_extra_blacklist", [])):
+    if autor.lower() in ("[deleted]", "automoderator") or cuerpo.strip().lower() in ("[removed]", "[deleted]"):
+        _contar("cerrados_borrados")
         return None
 
-    if es_global:
+    cabecera = f"{flair} {titulo}".strip()
+    combinado = f"{cabecera} {cuerpo}".strip()
+
+    if REGEX_CERRADO.search(cabecera):
+        _contar("cerrados_borrados")
+        return None
+    if REGEX_DESCARTAR.search(cabecera):
+        _contar("for_hire_offer")
+        return None
+    if REGEX_SPAM.search(combinado) or not pasa_blacklist_custom(combinado, cfg.get("palabras_extra_blacklist", [])):
+        _contar("spam_basura")
+        return None
+
+    if es_global or sub_low in SUBS_NICHO_ESTRICTO:
         if not REGEX_GLOBAL_HIRING.search(combinado):
+            _contar("sin_intencion_pago")
             return None
-    elif sub.lower() not in SUBS_SIN_TAG_OBLIGATORIO and not REGEX_ACEPTAR.search(titulo):
-        return None
+    elif sub_low not in SUBS_SIN_TAG_OBLIGATORIO:
+        if not REGEX_ACEPTAR.search(cabecera):
+            _contar("sin_intencion_pago")
+            return None
 
-    es_tech = bool(REGEX_TECH.search(combinado))
-    edad_min = int(edad_seg // 60)
-    comentarios = safe_int(d.get("num_comments", 0), 0)
+    tech_score, es_tech = puntuar_relevancia_local(titulo, cuerpo, sub=sub_low)
     comp_txt, comp_bonus = calcular_competencia(edad_min, comentarios)
     dinero_local = extraer_presupuesto_usd(combinado)
     prio_tag = detectar_prioridad_tag(combinado, dinero_local)
 
     return {
-        "id": d.get("name") or d.get("id") or d.get("permalink"),
-        "fuente": fuente,
-        "autor": d.get("author") or "",
+        "id": post_id or link,
+        "fuente": f"r/{sub}" if sub else "Reddit",
+        "autor": autor,
         "titulo": titulo,
         "titulo_norm": normalizar_titulo(titulo),
         "titulo_palabras": titulo_palabras_limpio(titulo),
         "texto": cuerpo,
-        "link": f"https://www.reddit.com{d.get('permalink', '')}",
+        "link": link,
         "es_tech": es_tech,
+        "tech_score": tech_score,
         "edad_min": edad_min,
         "comentarios": comentarios,
         "comp_txt": comp_txt,
-        "comp_bonus": comp_bonus + (2 if prio_tag else 0) + (1 if dinero_local >= 100 else 0),
+        "comp_bonus": comp_bonus + (2 if prio_tag else 0) + (1 if dinero_local >= 100 else 0) + (1 if tech_score >= 6 else 0),
         "dinero_local": dinero_local,
         "prioridad_tag": prio_tag,
         "origen": "reddit",
     }
 
-def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
+def procesar_child_reddit(d: dict, cfg: dict, fuente_forzada: str | None = None, es_global: bool = False, stats_descarte: dict | None = None) -> dict | None:
+    if d.get("over_18") or d.get("removed_by_category"):
+        if stats_descarte is not None:
+            stats_descarte["cerrados_borrados"] = stats_descarte.get("cerrados_borrados", 0) + 1
+        return None
+    ahora = time.time()
+    max_h = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
+    creado = d.get("created_utc", ahora)
+    edad_seg = max(0, ahora - creado)
+    if edad_seg > (max_h * 3600):
+        if stats_descarte is not None:
+            stats_descarte["viejos"] = stats_descarte.get("viejos", 0) + 1
+        return None
+
+    sub = (d.get("subreddit") or "").strip()
+    if not sub and fuente_forzada:
+        sub = fuente_forzada.replace("r/", "")
+
+    return _evaluar_post_reddit_comun(
+        post_id=d.get("name") or d.get("id") or d.get("permalink"),
+        sub=sub,
+        autor=d.get("author") or "",
+        titulo=(d.get("title") or "").strip(),
+        cuerpo=(d.get("selftext") or "")[:1600],
+        flair=(d.get("link_flair_text") or "").strip(),
+        link=f"https://www.reddit.com{d.get('permalink', '')}",
+        edad_min=int(edad_seg // 60),
+        comentarios=safe_int(d.get("num_comments", 0), 0),
+        cfg=cfg,
+        es_global=es_global,
+        stats_descarte=stats_descarte,
+    )
+
+def parsear_atom_reddit(xml_text: str, sub_default: str, cfg: dict, stats_descarte: dict | None = None) -> list:
     resultados = []
     max_h = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
     ahora = datetime.now(timezone.utc)
@@ -228,6 +332,7 @@ def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
         if not entry.tag.endswith("entry"):
             continue
         post_id = titulo = link = autor = contenido = actualizado = ""
+        sub_real = sub_default
         for ch in entry:
             tag = ch.tag.split("}", 1)[-1]
             if tag == "id" and ch.text:
@@ -236,6 +341,10 @@ def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
                 titulo = ch.text.strip()
             elif tag == "link":
                 link = ch.attrib.get("href", link)
+            elif tag == "category":
+                term = (ch.attrib.get("term") or "").strip()
+                if term:
+                    sub_real = term
             elif tag == "content" and ch.text:
                 contenido = limpiar_html(ch.text)
             elif tag == "updated" and ch.text:
@@ -251,139 +360,148 @@ def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
                 dt = datetime.fromisoformat(actualizado.replace("Z", "+00:00"))
                 diff_seg = max(0, (ahora - dt).total_seconds())
                 if diff_seg > max_h * 3600:
+                    if stats_descarte is not None:
+                        stats_descarte["viejos"] = stats_descarte.get("viejos", 0) + 1
                     continue
                 edad_min = int(diff_seg // 60)
             except ValueError:
                 pass
 
-        combinado = f"{titulo} {contenido}"
-        if not titulo or REGEX_DESCARTAR.search(titulo) or REGEX_SPAM.search(combinado):
-            continue
-        if not pasa_blacklist_custom(combinado, cfg.get("palabras_extra_blacklist", [])):
-            continue
-        if sub.lower() not in SUBS_SIN_TAG_OBLIGATORIO and not REGEX_ACEPTAR.search(titulo):
-            continue
-
-        dinero_local = extraer_presupuesto_usd(combinado)
-        prio_tag = detectar_prioridad_tag(combinado, dinero_local)
-        resultados.append({
-            "id": post_id or link,
-            "fuente": f"r/{sub}",
-            "autor": autor,
-            "titulo": titulo,
-            "titulo_norm": normalizar_titulo(titulo),
-            "titulo_palabras": titulo_palabras_limpio(titulo),
-            "texto": contenido,
-            "link": link,
-            "es_tech": bool(REGEX_TECH.search(combinado)),
-            "edad_min": edad_min,
-            "comentarios": None,
-            "comp_txt": f"⚡ RSS Nativo ({edad_min}m)" if edad_min is not None else "⚡ RSS Nativo",
-            "comp_bonus": (1 if (edad_min is not None and edad_min <= 20) else 0) + (2 if prio_tag else 0),
-            "dinero_local": dinero_local,
-            "prioridad_tag": prio_tag,
-            "origen": "reddit",
-        })
+        item = _evaluar_post_reddit_comun(
+            post_id=post_id or link,
+            sub=sub_real,
+            autor=autor,
+            titulo=titulo,
+            cuerpo=contenido,
+            flair="",
+            link=link,
+            edad_min=edad_min,
+            comentarios=None,
+            cfg=cfg,
+            es_global=False,
+            stats_descarte=stats_descarte,
+        )
+        if item:
+            resultados.append(item)
     return resultados
 
-def obtener_posts_subreddit(sub: str, cfg: dict) -> list:
-    time.sleep(random.uniform(0.10, 0.35))
-    items_validos = []
+def obtener_lote_multireddit(nombre_lote: str, subs: list[str], cfg: dict) -> tuple[list, dict]:
+    time.sleep(random.uniform(0.08, 0.30))
+    combo = "+".join(subs)
+    stats_desc: dict[str, int] = {}
+    items: list = []
 
-    try:
-        r = SESSION.get(f"https://www.reddit.com/r/{sub}/new.json?limit=15&raw_json=1", headers=REDDIT_HEADERS, timeout=10)
-        if r.status_code == 200:
-            for child in r.json().get("data", {}).get("children", []):
-                item = procesar_child_reddit(child.get("data", {}), cfg, fuente_forzada=f"r/{sub}")
-                if item:
-                    items_validos.append(item)
-            tech_n = sum(1 for x in items_validos if x["es_tech"])
-            print(f"{C.DIM}[OK] r/{sub:<18} (JSON) -> {len(items_validos):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
-            return items_validos
-    except Exception:
-        pass
+    # Nivel 1: Multireddit JSON directo (1 sola llamada para 4-5 subreddits, con flairs + comentarios exactos)
+    for host in ("https://www.reddit.com", "https://old.reddit.com"):
+        try:
+            r = SESSION.get(f"{host}/r/{combo}/new.json?limit=45&raw_json=1", headers=REDDIT_HEADERS, timeout=11)
+            if r.status_code == 200:
+                children = r.json().get("data", {}).get("children", [])
+                for child in children:
+                    it = procesar_child_reddit(child.get("data", {}), cfg, stats_descarte=stats_desc)
+                    if it:
+                        items.append(it)
+                tech_n = sum(1 for x in items if x["es_tech"])
+                print(f"{C.DIM}[OK] {nombre_lote:<16} (JSON {len(children):2d} raw) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
+                return items, {"fuente": nombre_lote, "modo": "JSON", "ok": True, "bruto": len(children), "tech": tech_n, "descartes": stats_desc}
+            if r.status_code == 429:
+                time.sleep(1.2)
+        except Exception:
+            pass
 
-    try:
-        r = SESSION.get(f"https://www.reddit.com/r/{sub}/new/.rss", headers=REDDIT_HEADERS, timeout=10)
-        if r.status_code == 200 and "<entry>" in r.text:
-            items_validos = parsear_atom_reddit(r.text, sub, cfg)
-            tech_n = sum(1 for x in items_validos if x["es_tech"])
-            print(f"{C.DIM}[OK] r/{sub:<18} (XML)  -> {len(items_validos):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
-            return items_validos
-    except Exception:
-        pass
+    # Nivel 2: Multireddit Atom XML nativo (en tiempo real, sin intermediarios)
+    for host in ("https://www.reddit.com", "https://old.reddit.com"):
+        try:
+            r = SESSION.get(f"{host}/r/{combo}/new/.rss", headers=REDDIT_HEADERS, timeout=11)
+            if r.status_code == 200 and "<entry>" in r.text:
+                items = parsear_atom_reddit(r.text, subs[0], cfg, stats_descarte=stats_desc)
+                tech_n = sum(1 for x in items if x["es_tech"])
+                print(f"{C.DIM}[OK] {nombre_lote:<16} (XML nativo) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
+                return items, {"fuente": nombre_lote, "modo": "XML", "ok": True, "bruto": len(items) + sum(stats_desc.values()), "tech": tech_n, "descartes": stats_desc}
+        except Exception:
+            pass
 
-    try:
-        api_url = f"https://api.rss2json.com/v1/api.json?rss_url=https://www.reddit.com/r/{sub}/new/.rss"
-        r = SESSION.get(api_url, headers=REDDIT_HEADERS, timeout=10)
-        if r.status_code == 200 and r.json().get("status") == "ok":
-            for raw in r.json().get("items", [])[:15]:
-                titulo = raw.get("title", "")
-                texto = limpiar_html(raw.get("description", ""))
-                combinado = f"{titulo} {texto}"
-                if not titulo or REGEX_DESCARTAR.search(titulo) or REGEX_SPAM.search(combinado):
-                    continue
-                if not pasa_blacklist_custom(combinado, cfg.get("palabras_extra_blacklist", [])):
-                    continue
-                if sub.lower() not in SUBS_SIN_TAG_OBLIGATORIO and not REGEX_ACEPTAR.search(titulo):
-                    continue
-                autor_raw = (raw.get("author") or "").replace("/u/", "").strip()
-                dinero_local = extraer_presupuesto_usd(combinado)
-                items_validos.append({
-                    "id": raw.get("guid", raw.get("link")),
-                    "fuente": f"r/{sub}",
-                    "autor": autor_raw,
-                    "titulo": titulo,
-                    "titulo_norm": normalizar_titulo(titulo),
-                    "titulo_palabras": titulo_palabras_limpio(titulo),
-                    "texto": texto,
-                    "link": raw.get("link", ""),
-                    "es_tech": bool(REGEX_TECH.search(combinado)),
-                    "edad_min": None,
-                    "comentarios": None,
-                    "comp_txt": "🔎 Via RSS2JSON",
-                    "comp_bonus": 0,
-                    "dinero_local": dinero_local,
-                    "prioridad_tag": detectar_prioridad_tag(combinado, dinero_local),
-                    "origen": "reddit",
-                })
-    except Exception as e:
-        print(f"{C.YELLOW}[!] Error r/{sub}: {e}{C.RESET}", flush=True)
+    # Nivel 3: Fallback individual via rss2json solo si Reddit bloqueo directo el lote completo
+    bruto_fb = 0
+    ok_subs = 0
+    for sub in subs:
+        try:
+            api_url = f"https://api.rss2json.com/v1/api.json?rss_url=https://www.reddit.com/r/{sub}/new/.rss"
+            r = SESSION.get(api_url, headers=REDDIT_HEADERS, timeout=10)
+            if r.status_code == 200 and r.json().get("status") == "ok":
+                ok_subs += 1
+                raw_items = r.json().get("items", [])[:12]
+                bruto_fb += len(raw_items)
+                for raw in raw_items:
+                    it = _evaluar_post_reddit_comun(
+                        post_id=raw.get("guid", raw.get("link", "")),
+                        sub=sub,
+                        autor=(raw.get("author") or "").replace("/u/", "").strip(),
+                        titulo=(raw.get("title") or "").strip(),
+                        cuerpo=limpiar_html(raw.get("description", "")),
+                        flair="",
+                        link=raw.get("link", ""),
+                        edad_min=None,
+                        comentarios=None,
+                        cfg=cfg,
+                        es_global=False,
+                        stats_descarte=stats_desc,
+                    )
+                    if it:
+                        items.append(it)
+        except Exception:
+            pass
 
-    tech_n = sum(1 for x in items_validos if x["es_tech"])
-    print(f"{C.DIM}[OK] r/{sub:<18} (RSS)  -> {len(items_validos):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
-    return items_validos
+    tech_n = sum(1 for x in items if x["es_tech"])
+    modo_fb = f"RSS-FB ({ok_subs}/{len(subs)})" if ok_subs else "ERROR"
+    color = C.YELLOW if ok_subs else C.RED
+    print(f"{color}[{'OK' if ok_subs else '!'}] {nombre_lote:<16} ({modo_fb}) -> {len(items):2d} hiring ({tech_n} tech){C.RESET}", flush=True)
+    return items, {"fuente": nombre_lote, "modo": modo_fb, "ok": ok_subs > 0, "bruto": bruto_fb, "tech": tech_n, "descartes": stats_desc}
 
-def buscar_reddit_global(query_str: str, etiqueta: str, cfg: dict) -> list:
+def buscar_reddit_global(query_str: str, etiqueta: str, cfg: dict) -> tuple[list, dict]:
     items = []
-    url = f"https://www.reddit.com/search.json?q={quote(query_str)}&sort=new&t=day&limit=20&raw_json=1"
+    stats_desc: dict[str, int] = {}
+    url = f"https://www.reddit.com/search.json?q={quote(query_str)}&sort=new&t=day&limit=25&raw_json=1"
     try:
         r = SESSION.get(url, headers=REDDIT_HEADERS, timeout=12)
         if r.status_code == 200:
-            for child in r.json().get("data", {}).get("children", []):
-                item = procesar_child_reddit(child.get("data", {}), cfg, es_global=True)
+            children = r.json().get("data", {}).get("children", [])
+            for child in children:
+                item = procesar_child_reddit(child.get("data", {}), cfg, es_global=True, stats_descarte=stats_desc)
                 if item and item["es_tech"]:
                     items.append(item)
-            print(f"{C.CYAN}[OK] {etiqueta:<20} -> {len(items):2d} joyas tech{C.RESET}", flush=True)
+            print(f"{C.CYAN}[OK] {etiqueta:<16} (JSON {len(children):2d} raw) -> {len(items):2d} joyas tech{C.RESET}", flush=True)
+            return items, {"fuente": etiqueta, "modo": "JSON", "ok": True, "bruto": len(children), "tech": len(items), "descartes": stats_desc}
+        print(f"{C.YELLOW}[!] {etiqueta:<16} HTTP {r.status_code}{C.RESET}", flush=True)
+        return items, {"fuente": etiqueta, "modo": f"HTTP {r.status_code}", "ok": False, "bruto": 0, "tech": 0, "descartes": stats_desc}
     except Exception as e:
         print(f"{C.YELLOW}[!] Error {etiqueta}: {e}{C.RESET}", flush=True)
-    return items
+        return items, {"fuente": etiqueta, "modo": "ERROR", "ok": False, "bruto": 0, "tech": 0, "descartes": stats_desc}
 
-def buscar_github_bounties() -> list:
+def buscar_github_bounties() -> tuple[list, dict]:
     items = []
-    desde = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
-    q = quote(f"is:issue is:open label:bounty created:>={desde} (python OR scraper OR bot OR automation)")
-    url = f"https://api.github.com/search/issues?q={q}&sort=created&order=desc&per_page=8"
+    ahora = datetime.now(timezone.utc)
+    desde = (ahora - timedelta(days=4)).strftime("%Y-%m-%d")
+    q = quote(f"is:issue is:open (label:bounty OR algora) created:>={desde} (python OR scraper OR bot OR automation)")
+    url = f"https://api.github.com/search/issues?q={q}&sort=created&order=desc&per_page=10"
     try:
         r = SESSION.get(url, headers=GITHUB_HEADERS, timeout=12)
         if r.status_code == 200:
-            for iss in r.json().get("items", []):
+            crudos = r.json().get("items", [])
+            for iss in crudos:
                 titulo = iss.get("title", "")
                 cuerpo = (iss.get("body") or "")[:1400]
                 combinado = f"{titulo} {cuerpo}"
                 dinero_local = extraer_presupuesto_usd(combinado)
                 if dinero_local <= 0:
                     continue
+                edad_min = 120
+                if iss.get("created_at"):
+                    try:
+                        dt = datetime.fromisoformat(iss["created_at"].replace("Z", "+00:00"))
+                        edad_min = max(0, int((ahora - dt).total_seconds() // 60))
+                    except ValueError:
+                        pass
                 comentarios = safe_int(iss.get("comments", 0), 0)
                 items.append({
                     "id": f"gh_bounty_{iss.get('id')}",
@@ -395,38 +513,52 @@ def buscar_github_bounties() -> list:
                     "texto": cuerpo,
                     "link": iss.get("html_url", ""),
                     "es_tech": True,
-                    "edad_min": 60,
+                    "tech_score": 8,
+                    "edad_min": edad_min,
                     "comentarios": comentarios,
-                    "comp_txt": f"💎 Issue abierto ({comentarios} com.)",
+                    "comp_txt": f"💎 Issue ({edad_min // 60}h | {comentarios} com.)",
                     "comp_bonus": 2 if comentarios <= 2 else 0,
                     "dinero_local": dinero_local,
                     "prioridad_tag": "🐋 HIGH-TICKET" if dinero_local >= 250 else "",
                     "origen": "github",
                 })
-            print(f"{C.MAGENTA}[OK] GitHub Bounties      -> {len(items):2d} recompensas{C.RESET}", flush=True)
+            print(f"{C.MAGENTA}[OK] GitHub Bounties  (API  {len(crudos):2d} raw) -> {len(items):2d} recompensas{C.RESET}", flush=True)
+            return items, {"fuente": "GitHub Bounties", "modo": "API", "ok": True, "bruto": len(crudos), "tech": len(items), "descartes": {}}
+        return items, {"fuente": "GitHub Bounties", "modo": f"HTTP {r.status_code}", "ok": False, "bruto": 0, "tech": 0, "descartes": {}}
     except Exception as e:
         print(f"{C.YELLOW}[!] Error GitHub Bounties: {e}{C.RESET}", flush=True)
-    return items
+        return items, {"fuente": "GitHub Bounties", "modo": "ERROR", "ok": False, "bruto": 0, "tech": 0, "descartes": {}}
 
-def buscar_hackernews_freelance() -> list:
+def buscar_hackernews_freelance() -> tuple[list, dict]:
     items = []
-    hace_48h = int(time.time() - 48 * 3600)
+    ahora_ts = time.time()
+    hace_48h = int(ahora_ts - 48 * 3600)
     vistos_hn = set()
+    bruto = 0
+    ok_alg = False
     for q in ("freelance python automation", "hiring python scraping bot"):
-        url = f"https://hn.algolia.com/api/v1/search_by_date?query={quote(q)}&tags=comment&numericFilters=created_at_i>{hace_48h}&hitsPerPage=6"
+        url = f"https://hn.algolia.com/api/v1/search_by_date?query={quote(q)}&tags=comment&numericFilters=created_at_i>{hace_48h}&hitsPerPage=8"
         try:
             r = SESSION.get(url, timeout=10)
             if r.status_code == 200:
-                for hit in r.json().get("hits", []):
+                ok_alg = True
+                hits = r.json().get("hits", [])
+                bruto += len(hits)
+                for hit in hits:
                     obj_id = hit.get("objectID")
                     if not obj_id or obj_id in vistos_hn:
                         continue
                     vistos_hn.add(obj_id)
                     texto = limpiar_html(hit.get("comment_text", ""))
-                    if not texto or len(texto) < 60:
+                    if not texto or len(texto) < 60 or REGEX_HN_DESCARTE.search(texto):
                         continue
-                    if not re.search(r"\b(hiring|looking for|need a|contract|freelancer|paid)\b", texto, re.IGNORECASE):
+                    if not re.search(r"\b(hiring|looking\s+for|need\s+a|seeking\s+freelancer|contract|paid)\b", texto, re.IGNORECASE):
                         continue
+                    tech_score, es_tech = puntuar_relevancia_local("", texto)
+                    if not es_tech:
+                        continue
+                    creado_i = safe_int(hit.get("created_at_i", int(ahora_ts)), int(ahora_ts))
+                    edad_min = max(0, int((ahora_ts - creado_i) // 60))
                     story_title = hit.get("story_title") or "HN Freelance Thread"
                     dinero_local = extraer_presupuesto_usd(texto) or 250.0
                     items.append({
@@ -438,10 +570,11 @@ def buscar_hackernews_freelance() -> list:
                         "titulo_palabras": titulo_palabras_limpio(texto[:120]),
                         "texto": texto,
                         "link": f"https://news.ycombinator.com/item?id={obj_id}",
-                        "es_tech": bool(REGEX_TECH.search(texto)),
-                        "edad_min": 120,
+                        "es_tech": True,
+                        "tech_score": tech_score,
+                        "edad_min": edad_min,
                         "comentarios": 0,
-                        "comp_txt": "🔥 Cliente HN (Ticket alto)",
+                        "comp_txt": f"🔥 Cliente HN ({edad_min // 60}h)",
                         "comp_bonus": 2,
                         "dinero_local": dinero_local,
                         "prioridad_tag": "🐋 HIGH-TICKET",
@@ -449,40 +582,63 @@ def buscar_hackernews_freelance() -> list:
                     })
         except Exception as e:
             print(f"{C.YELLOW}[!] Error HackerNews: {e}{C.RESET}", flush=True)
-    print(f"{C.BLUE}[OK] HackerNews High-$    -> {len(items):2d} leads freelance{C.RESET}", flush=True)
-    return items
+    print(f"{C.BLUE}[OK] HackerNews       (API  {bruto:2d} raw) -> {len(items):2d} leads freelance{C.RESET}", flush=True)
+    return items, {"fuente": "HackerNews", "modo": "API" if ok_alg else "ERROR", "ok": ok_alg, "bruto": bruto, "tech": len(items), "descartes": {}}
 
-def recolectar_todo(cfg: dict) -> list:
+def recolectar_todo(cfg: dict) -> tuple[list, dict]:
     ofertas_raw = []
+    detalle_fuentes = []
     q_global_1 = '("Hiring" OR "looking to hire" OR "will pay") (python OR scraper OR scraping OR selenium OR playwright OR csv)'
     q_global_2 = '("Hiring" OR "looking to hire" OR "will pay") (telegram OR discord OR bot OR automation OR shopify OR n8n OR zapier)'
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        futuros = [pool.submit(obtener_posts_subreddit, sub, cfg) for sub in SUBREDDITS]
-        futuros.append(pool.submit(buscar_reddit_global, q_global_1, "Global Python/Data", cfg))
-        futuros.append(pool.submit(buscar_reddit_global, q_global_2, "Global Bots/Auto", cfg))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futuros = [pool.submit(obtener_lote_multireddit, nom, subs, cfg) for nom, subs in MULTIREDDIT_BATCHES]
+        futuros.append(pool.submit(buscar_reddit_global, q_global_1, "Global-Python", cfg))
+        futuros.append(pool.submit(buscar_reddit_global, q_global_2, "Global-Bots", cfg))
         futuros.append(pool.submit(buscar_github_bounties))
         futuros.append(pool.submit(buscar_hackernews_freelance))
         for fut in as_completed(futuros):
             try:
-                ofertas_raw.extend(fut.result())
-            except Exception:
-                pass
+                its, meta = fut.result()
+                ofertas_raw.extend(its)
+                detalle_fuentes.append(meta)
+            except Exception as e:
+                detalle_fuentes.append({"fuente": "desconocida", "modo": f"ERR {e}", "ok": False, "bruto": 0, "tech": 0, "descartes": {}})
 
-    ofertas_raw.sort(key=lambda x: (x["comp_bonus"], x["dinero_local"], -(x["edad_min"] or 999)), reverse=True)
+    # Priorizar por competencia baja, presupuesto real, puntaje tecnico y frescura
+    ofertas_raw.sort(
+        key=lambda x: (x.get("comp_bonus", 0), x.get("dinero_local", 0) > 0, x.get("tech_score", 0), -(x.get("edad_min") or 999)),
+        reverse=True,
+    )
     unicas = []
     vistos_ids = set()
     vistos_tit = set()
+    dup_memoria = 0
     for it in ofertas_raw:
         pid = it.get("id")
         tn = it.get("titulo_norm")
         if pid in vistos_ids or (tn and tn in vistos_tit):
+            dup_memoria += 1
             continue
         vistos_ids.add(pid)
         if tn:
             vistos_tit.add(tn)
         unicas.append(it)
-    return unicas
+
+    descartes_totales: dict[str, int] = {}
+    for m in detalle_fuentes:
+        for k, v in (m.get("descartes") or {}).items():
+            descartes_totales[k] = descartes_totales.get(k, 0) + v
+
+    telemetria = {
+        "fuentes_ok": sum(1 for m in detalle_fuentes if m.get("ok")),
+        "fuentes_total": len(detalle_fuentes),
+        "bruto": sum(m.get("bruto", 0) for m in detalle_fuentes),
+        "dup_memoria": dup_memoria,
+        "descartes_pre": descartes_totales,
+        "detalle_fuentes": sorted(detalle_fuentes, key=lambda x: x["fuente"]),
+    }
+    return unicas, telemetria
 
 def contexto_aprendizaje_crm(conn) -> str:
     if conn is None:
@@ -640,7 +796,7 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
         pendientes = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('nuevo', 'contactado', 'negociando')").fetchone()[0]
 
         msg = (
-            f"<b>📊 RESUMEN ZEROTOUCH APEX ({hoy})</b>\n\n"
+            f"<b>📊 RESUMEN ZEROTOUCH v12.5 ({hoy})</b>\n\n"
             f"🛡️ <b>Basura bloqueada sin IA:</b> {desc} (~{t_ah:,} tokens ahorrados)\n"
             f"🤖 <b>Ofertas analizadas hoy:</b> {ev} (~{t_us:,} tokens usados)\n"
             f"⚡ <b>Alertas enviadas hoy:</b> {al}\n"
@@ -654,49 +810,74 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
     finally:
         conn.close()
 
-def ejecutar_ciclo(modo_sonido: bool = False) -> dict:
+def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
     cfg = cargar_config()
     max_ia = max(1, safe_int(cfg.get("max_ia_por_ciclo", 16), 16))
     t0 = time.time()
     hora = datetime.now().strftime("%H:%M:%S")
-    log_evento("Iniciando barrido APEX v12.0 (16 fuentes)")
-    print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar APEX v12.0 (16 Fuentes + Global Natural + Stopwords)...{C.RESET}", flush=True)
+    etiqueta_modo = "DRY-RUN 0-TOKENS" if dry_run else "OVERDRIVE v12.5"
+    log_evento(f"Iniciando escaneo {etiqueta_modo}")
+    print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar {etiqueta_modo} (3 Multireddits = 14 Subs + 2 Global + Bounties + HN)...{C.RESET}", flush=True)
 
     conn = preparar_db()
-    descartados_local = 0
+    descartados_no_tech = 0
     duplicados_sem = 0
+    ya_vistos_n = 0
     evaluadas_ia = 0
     alertas_enviadas = 0
     tok_usados = 0
     tok_ahorrados = 0
-    try:
-        aprendizaje = contexto_aprendizaje_crm(conn)
-        recientes = [
-            r[0]
-            for r in conn.execute("SELECT titulo_palabras FROM vistos WHERE titulo_palabras != '' ORDER BY ts DESC LIMIT 250").fetchall()
-        ]
+    fallos_ia_seguidos = 0
+    candidatas_preview = []
 
-        for item in recolectar_todo(cfg):
-            ya_visto = conn.execute(
-                "SELECT 1 FROM vistos WHERE post_id = ? OR (titulo_norm != '' AND titulo_norm = ?)",
-                (item["id"], item["titulo_norm"]),
-            ).fetchone()
-            if ya_visto:
+    try:
+        # Carga O(1) en memoria de vistos (1 sola query en lugar de 150)
+        filas_v = conn.execute("SELECT post_id, titulo_norm, titulo_palabras FROM vistos ORDER BY ts DESC LIMIT 2500").fetchall()
+        vistos_ids = {r[0] for r in filas_v if r[0]}
+        vistos_norms = {r[1] for r in filas_v if r[1]}
+        recientes = [r[2] for r in filas_v[:250] if r[2]]
+
+        aprendizaje = "" if dry_run else contexto_aprendizaje_crm(conn)
+        ofertas, telemetria = recolectar_todo(cfg)
+
+        for item in ofertas:
+            pid = item["id"]
+            tn = item["titulo_norm"]
+            if pid in vistos_ids or (tn and tn in vistos_norms):
+                ya_vistos_n += 1
                 continue
 
             palabras = item.get("titulo_palabras", "")
             if palabras and any(similitud_jaccard(palabras, prev) >= 0.76 for prev in recientes):
-                conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (item["id"], item["titulo_norm"], palabras))
-                conn.commit()
+                if not dry_run:
+                    conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (pid, tn, palabras))
+                    conn.commit()
+                vistos_ids.add(pid)
+                if tn:
+                    vistos_norms.add(tn)
                 duplicados_sem += 1
                 tok_ahorrados += 420
                 continue
 
             if not item["es_tech"]:
-                conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (item["id"], item["titulo_norm"], palabras))
-                conn.commit()
-                descartados_local += 1
+                if not dry_run:
+                    conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (pid, tn, palabras))
+                    conn.commit()
+                vistos_ids.add(pid)
+                if tn:
+                    vistos_norms.add(tn)
+                descartados_no_tech += 1
                 tok_ahorrados += 420
+                continue
+
+            if dry_run:
+                candidatas_preview.append({
+                    "fuente": item["fuente"],
+                    "titulo": item["titulo"][:90],
+                    "tech_score": item.get("tech_score", 0),
+                    "dinero": item.get("dinero_local", 0),
+                    "comp": item.get("comp_txt", ""),
+                })
                 continue
 
             if evaluadas_ia >= max_ia:
@@ -706,34 +887,67 @@ def ejecutar_ciclo(modo_sonido: bool = False) -> dict:
             ok, enviado, t_est = evaluar_y_enviar(item, cfg, conn=conn, modo_sonido=modo_sonido, aprendizaje=aprendizaje)
             tok_usados += t_est
             if ok:
-                conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (item["id"], item["titulo_norm"], palabras))
+                fallos_ia_seguidos = 0
+                conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (pid, tn, palabras))
                 conn.commit()
+                vistos_ids.add(pid)
+                if tn:
+                    vistos_norms.add(tn)
                 if palabras:
                     recientes.append(palabras)
                 evaluadas_ia += 1
                 if enviado:
                     alertas_enviadas += 1
-            time.sleep(0.55)
+            else:
+                fallos_ia_seguidos += 1
+                if fallos_ia_seguidos >= 3:
+                    log_evento("[!] Circuit Breaker IA activado (3 fallos seguidos)")
+                    print(f"{C.RED}[!] Circuit Breaker IA: 3 fallos seguidos. Pausando resto del ciclo.{C.RESET}", flush=True)
+                    break
+            time.sleep(0.5)
 
-        followups = revisar_recordatorios_followup(conn, cfg)
-        registrar_metricas(
-            conn,
-            descartados=descartados_local + duplicados_sem,
-            ia=evaluadas_ia,
-            alertas=alertas_enviadas,
-            tok_usados=tok_usados,
-            tok_ahorrados=tok_ahorrados,
-        )
+        followups = 0 if dry_run else revisar_recordatorios_followup(conn, cfg)
+        pre_desc = sum((telemetria.get("descartes_pre") or {}).values())
+        total_desc = descartados_no_tech + duplicados_sem + telemetria.get("dup_memoria", 0) + pre_desc
+        if not dry_run:
+            registrar_metricas(
+                conn,
+                descartados=total_desc,
+                ia=evaluadas_ia,
+                alertas=alertas_enviadas,
+                tok_usados=tok_usados,
+                tok_ahorrados=tok_ahorrados + (pre_desc * 420),
+            )
+
         dur = round(time.time() - t0, 1)
-        resumen_txt = f"Ciclo APEX terminado en {dur}s | Filtrados: {descartados_local + duplicados_sem} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
+        f_ok = telemetria["fuentes_ok"]
+        f_tot = telemetria["fuentes_total"]
+        if dry_run:
+            resumen_txt = f"DRY-RUN en {dur}s | Fuentes: {f_ok}/{f_tot} | Bruto: {telemetria['bruto']} | Nuevas candidatas tech: {len(candidatas_preview)} | Bloqueados 0-tokens: {total_desc}"
+        else:
+            resumen_txt = f"Ciclo v12.5 en {dur}s | Fuentes: {f_ok}/{f_tot} | Filtrados: {total_desc} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
         log_evento(resumen_txt)
-        print(f"{C.GREEN}{resumen_txt} | Followups: {followups}{C.RESET}", flush=True)
+        print(f"{C.GREEN}{resumen_txt}{C.RESET}", flush=True)
+        if dry_run and candidatas_preview:
+            print(f"\n{C.BOLD}Top candidatas nuevas que pasarian a Gemini:{C.RESET}")
+            for c in candidatas_preview[:8]:
+                print(f"  - [{c['fuente']} | Tech:{c['tech_score']} | ${c['dinero']:.0f}] {c['titulo']} ({c['comp']})")
+            print()
+
         return {
-            "descartados": descartados_local + duplicados_sem,
+            "dry_run": dry_run,
+            "fuentes_ok": f_ok,
+            "fuentes_total": f_tot,
+            "bruto": telemetria["bruto"],
+            "ya_vistos": ya_vistos_n,
+            "descartados": total_desc,
+            "descartes_pre": telemetria["descartes_pre"],
             "ia": evaluadas_ia,
             "alertas": alertas_enviadas,
             "followups": followups,
             "segundos": dur,
+            "detalle_fuentes": telemetria["detalle_fuentes"],
+            "candidatas_preview": candidatas_preview[:15],
         }
     finally:
         conn.close()
@@ -741,13 +955,13 @@ def ejecutar_ciclo(modo_sonido: bool = False) -> dict:
 def modo_sniper() -> None:
     cfg = cargar_config()
     intervalo = max(45, safe_int(cfg.get("intervalo_sniper_seg", 70), 70))
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR APEX (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR OVERDRIVE v12.5 (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
     print(f"{C.DIM}Minimiza esta ventana mientras usas tu PC. Presiona Ctrl+C para salir.{C.RESET}")
     ciclo_n = 0
     try:
         while True:
             ciclo_n += 1
-            print(f"\n{C.DIM}--- Barrido APEX #{ciclo_n} ---{C.RESET}")
+            print(f"\n{C.DIM}--- Barrido OVERDRIVE #{ciclo_n} ---{C.RESET}")
             ejecutar_ciclo(modo_sonido=True)
             print(f"{C.DIM}Esperando {intervalo}s para el proximo barrido...{C.RESET}", flush=True)
             time.sleep(intervalo)
@@ -755,7 +969,9 @@ def modo_sniper() -> None:
         print(f"\n{C.YELLOW}[*] Modo Francotirador detenido.{C.RESET}\n")
 
 if __name__ == "__main__":
-    if "--test" in sys.argv:
+    if "--dry-run" in sys.argv:
+        ejecutar_ciclo(modo_sonido=False, dry_run=True)
+    elif "--test" in sys.argv:
         cfg_t = cargar_config()
         prueba = {
             "fuente": "r/forhire",

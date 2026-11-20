@@ -91,7 +91,7 @@ MAPA_PIP = {
 }
 
 _LOG_LOCK = threading.Lock()
-_LOG_BUFFER: deque[str] = deque(maxlen=100)
+_LOG_BUFFER: deque[str] = deque(maxlen=120)
 
 def log_evento(msg: str, imprimir: bool = False) -> None:
     linea = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
@@ -135,27 +135,57 @@ def extraer_score(val) -> int:
         return 0
     return max(0, min(10, int(round(float(m.group(1))))))
 
+def _parse_monto_k(num_str: str, suf_k: str | None) -> float:
+    val = safe_float(num_str, 0.0)
+    if suf_k and suf_k.lower() == "k":
+        val *= 1000.0
+    return val
+
 def extraer_presupuesto_usd(texto: str) -> float:
     if not texto:
         return 0.0
     t = str(texto)
-    m_rango = re.search(r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)\s*(?:-|–|to)\s*(?:\$|€)?(\d{1,5}(?:,\d{3})*(?:\.\d+)?)", t, re.IGNORECASE)
-    if m_rango:
-        a = safe_float(m_rango.group(1))
-        b = safe_float(m_rango.group(2))
+
+    # 1. Rango con prefijo de moneda: $80-$120, $1k-$2k, USD 100-200
+    m_r1 = re.search(
+        r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:-|–|to)\s*(?:\$|€)?(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?",
+        t,
+        re.IGNORECASE,
+    )
+    if m_r1:
+        a = _parse_monto_k(m_r1.group(1), m_r1.group(2))
+        b = _parse_monto_k(m_r1.group(3), m_r1.group(4))
         prom = round((a + b) / 2.0, 2)
         if 5 <= prom <= 50000:
             return prom
-    m_pref = re.search(r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)", t, re.IGNORECASE)
+
+    # 2. Rango con moneda al final: 50-150 USD, 1k-2k USDT
+    m_r2 = re.search(
+        r"\b(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:-|–|to)\s*(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:USD|USDT|bucks|\$|€)\b",
+        t,
+        re.IGNORECASE,
+    )
+    if m_r2:
+        a = _parse_monto_k(m_r2.group(1), m_r2.group(2))
+        b = _parse_monto_k(m_r2.group(3), m_r2.group(4))
+        prom = round((a + b) / 2.0, 2)
+        if 5 <= prom <= 50000:
+            return prom
+
+    # 3. Valor unico con prefijo: $1.5k, $150, USD 200
+    m_pref = re.search(r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\b", t, re.IGNORECASE)
     if m_pref:
-        v = safe_float(m_pref.group(1))
+        v = _parse_monto_k(m_pref.group(1), m_pref.group(2))
         if 5 <= v <= 50000:
-            return v
-    m_suf = re.search(r"(\d{1,5}(?:,\d{3})*(?:\.\d+)?)\s*(?:USD|USDT|bucks|\$)", t, re.IGNORECASE)
+            return round(v, 2)
+
+    # 4. Valor unico con sufijo: 250 USDT, 1.5k USD, 100$
+    m_suf = re.search(r"\b(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:USD|USDT|bucks|\$|€)\b", t, re.IGNORECASE)
     if m_suf:
-        v = safe_float(m_suf.group(1))
+        v = _parse_monto_k(m_suf.group(1), m_suf.group(2))
         if 5 <= v <= 50000:
-            return v
+            return round(v, 2)
+
     return 0.0
 
 def cargar_env(ruta: str | None = None) -> None:
@@ -418,7 +448,7 @@ def verificar_confianza_reddit(autor: str) -> str:
     try:
         r = SESSION.get(
             f"https://www.reddit.com/user/{autor}/about.json",
-            headers={"User-Agent": "python:zerotouch-trust:v12.0 (by /u/zerotouch_freelance)"},
+            headers={"User-Agent": "python:zerotouch-trust:v12.5 (by /u/zerotouch_freelance)"},
             timeout=6,
         )
         if r.status_code == 200:

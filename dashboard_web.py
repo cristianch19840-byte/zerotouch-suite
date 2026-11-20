@@ -54,7 +54,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ZeroTouch APEX v12.0 — Freelance OS</title>
+<title>ZeroTouch APEX v12.5 — Freelance OS</title>
 <style>
   :root {
     --bg:#060911; --sidebar:#0b1120; --card:#0f172a; --card2:#162033;
@@ -146,7 +146,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 </head>
 <body>
   <aside class="side">
-    <div class="brand">⚡ ZeroTouch <span>APEX</span><small>v12.0 Unified Freelance OS</small></div>
+    <div class="brand">⚡ ZeroTouch <span>APEX</span><small>v12.5 Unified Freelance OS</small></div>
     <div class="nav-grp">Operacion</div>
     <button class="nav-btn active" id="nav_crm" onclick="verTab('t_crm','📡 Radar & CRM',this)">📡 Radar & CRM</button>
     <button class="nav-btn" onclick="verTab('t_stats','📊 Analytics & Pipeline',this)">📊 Analytics & Pipeline</button>
@@ -158,7 +158,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <button class="nav-btn" id="nav_whop" onclick="verTab('t_whop','📦 Whop, Facturas & Calc',this)">📦 Whop, Facturas & Calc</button>
     <div class="nav-grp">Sistema</div>
     <button class="nav-btn" onclick="verTab('t_cfg','⚙️ Ajustes & Salud',this)">⚙️ Ajustes & Salud</button>
-    <div class="side-foot">APEX v12.0 • 16 Fuentes • AST</div>
+    <div class="side-foot">APEX v12.5 • 16 Fuentes • AST</div>
   </aside>
 
   <main class="main">
@@ -397,7 +397,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <div class="card">
           <h3>🩺 Salud del Sistema & Logs en Vivo</h3>
           <div class="actions" style="margin-bottom:14px;">
-            <button class="primary" onclick="correrDiagWeb(this)">🩺 Probar Conexiones</button>
+            <button class="primary" onclick="correrDiagWeb(this)">🩺 Probar Conexiones</button><button class="sm" onclick="correrDryRunWeb(this)">🧪 Test Escaner (0 Tokens)</button>
             <button class="purple" onclick="probarTelegramWeb(this)">📨 Alerta Prueba TG</button>
             <button class="success" onclick="hacerBackupWeb()">💾 Backup DB</button>
           </div>
@@ -526,7 +526,7 @@ async function cargarDatos(forzarTabla=false){
   const st = document.getElementById('scanStatus');
   if(DATA.scan.running){ st.textContent = '⏳ Escaneando 16 fuentes en segundo plano...'; }
   else if(DIRTY_LEADS.size > 0){ st.textContent = `✏️ Tienes ${DIRTY_LEADS.size} fila(s) sin guardar`; }
-  else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; st.textContent = `✅ Ultimo barrido: ${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
+  else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; const fTxt = lr.fuentes_total ? `Fuentes ${lr.fuentes_ok}/${lr.fuentes_total} | ` : ``; st.textContent = `✅ ${fTxt}${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
 
   if(DATA.logs && DATA.logs.length){
     document.getElementById('liveLogs').textContent = DATA.logs.join('\n');
@@ -889,6 +889,18 @@ async function guardarConfigWeb(){
   toast('💾 Configuracion guardada');
 }
 
+async function correrDryRunWeb(btn){
+  btn.disabled = true;
+  document.getElementById('resDiag').textContent = '⏳ Ejecutando Dry-Run real de todas las fuentes (0 tokens IA)...';
+  const d = await apiJson('/api/scan_dry', { method:'POST' });
+  btn.disabled = false;
+  if(d.error){ document.getElementById('resDiag').textContent = 'Error: ' + d.error; return; }
+  const fLines = (d.detalle_fuentes || []).map(f => `  ${f.ok ? '✅' : '❌'} ${f.fuente.padEnd(16)} [${f.modo}] -> ${f.bruto} raw | ${f.tech} tech`).join('\n');
+  const cLines = (d.candidatas_preview || []).slice(0, 8).map(c => `  • [${c.fuente} | Tech:${c.tech_score} | $${c.dinero}] ${c.titulo}`).join('\n') || '  (Todas las ofertas tech actuales ya estan en tu cache de vistos)';
+  document.getElementById('resDiag').textContent = `=== DRY-RUN OVERDRIVE (${d.segundos}s | 0 Tokens) ===\nFuentes OK: ${d.fuentes_ok}/${d.fuentes_total} | Bruto: ${d.bruto} | Bloqueados: ${d.descartados} | Ya vistos: ${d.ya_vistos}\n\nFUENTES:\n${fLines}\n\nCANDIDATAS NUEVAS QUE PASARIAN A GEMINI (${(d.candidatas_preview||[]).length}):\n${cLines}`;
+  toast('🧪 Dry-Run terminado (0 tokens gastados)');
+}
+
 async function correrDiagWeb(btn){
   btn.disabled = true;
   document.getElementById('resDiag').textContent = '⏳ Probando Reddit, Telegram y Gemini...';
@@ -912,7 +924,7 @@ async function hacerBackupWeb(){
 
 cargarConfigWeb();
 cargarDatos(true);
-setInterval(() => cargarDatos(false), 15000);
+setInterval(() => cargarDatos(false), 15000); setInterval(() => { if(DATA.scan && DATA.scan.running) cargarDatos(false); }, 3500);
 </script>
 </body>
 </html>
@@ -993,7 +1005,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     lineas.append("4. Telegram API      : FALTA TELEGRAM_TOKEN")
                 try:
-                    rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v12.0"}, timeout=6)
+                    rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v12.5"}, timeout=6)
                     lineas.append(f"5. Reddit API        : {'OK (JSON en vivo)' if rr.status_code == 200 else 'Fallback XML Nativo (HTTP ' + str(rr.status_code) + ')'}")
                 except Exception as e:
                     lineas.append(f"5. Reddit API        : Error ({e})")
@@ -1130,7 +1142,7 @@ class Handler(BaseHTTPRequestHandler):
                 prueba = {
                     "fuente": "r/forhire",
                     "autor": "spez",
-                    "titulo": "[Hiring] Test Alert APEX v12.0 ($250 USD)",
+                    "titulo": "[Hiring] Test Alert APEX v12.5 ($250 USD)",
                     "texto": "Need a Python script to scrape product prices into CSV.",
                     "link": "https://www.reddit.com/r/forhire/",
                     "comp_txt": "🎯 SANGRE FRESCA (1m | 0 com.)",
@@ -1248,8 +1260,8 @@ def main() -> None:
         webbrowser.open(url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
-    log_evento("Servidor Web APEX v12.0 iniciado en " + url)
-    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH APEX v12.0 WEB OS: {url} ==={C.RESET}")
+    log_evento("Servidor Web APEX v12.5 iniciado en " + url)
+    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH APEX v12.5 WEB OS: {url} ==={C.RESET}")
     print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
     webbrowser.open(url)
     try:
