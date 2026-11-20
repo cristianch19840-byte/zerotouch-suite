@@ -1,147 +1,127 @@
-﻿import os
+import os
 import re
 import sys
-import requests
+from datetime import datetime
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
-if os.path.exists(".env"):
-    with open(".env", encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+from core_ia import SESSION, generar_texto_ia, extraer_etiqueta, limpiar_bloque_codigo, copiar_al_portapapeles
 
-GEMINI_KEY = os.getenv("GEMINI_API_KEY_FREE")
-
-def obtener_modelos_activos(headers: dict) -> list:
-    prioritarios = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemma-3-27b-it"]
+def descargar_post_reddit(url: str) -> str | None:
+    limpia = url.split("?")[0].rstrip("/")
+    json_url = f"{limpia}.json?raw_json=1"
+    headers = {"User-Agent": "python:zerotouch-copiloto:v7.0 (by /u/zerotouch_freelance)"}
     try:
-        r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", headers=headers, timeout=10)
+        r = SESSION.get(json_url, headers=headers, timeout=12)
         if r.status_code == 200:
-            candidatos = []
-            ignorar = ("2.0", "2.5", "1.5", "embedding", "aqa", "imagen", "veo", "tts", "audio", "robotics", "computer-use", "deep-research")
-            for m in r.json().get("models", []):
-                nombre = m.get("name", "").replace("models/", "")
-                metodos = m.get("supportedGenerationMethods", [])
-                if "generateContent" not in metodos or any(bad in nombre.lower() for bad in ignorar):
-                    continue
-                if ("gemini" in nombre.lower() or "gemma" in nombre.lower()) and "image" not in nombre.lower():
-                    candidatos.append(nombre)
-            candidatos.sort(reverse=True)
-            ordenados = [m for m in prioritarios if m in candidatos]
-            for m in candidatos:
-                if m not in ordenados:
-                    ordenados.append(m)
-            if ordenados:
-                return ordenados
-    except Exception:
-        pass
-    return prioritarios
+            data = r.json()[0]["data"]["children"][0]["data"]
+            titulo = data.get("title", "")
+            cuerpo = data.get("selftext", "")
+            sub = data.get("subreddit_name_prefixed", "Reddit")
+            return f"Fuente: {sub}\nTitulo: {titulo}\n\n{cuerpo}".strip()
+    except Exception as e:
+        print(f"[!] No pude leer el link automatico ({e}).")
+    return None
 
-def extraer_etiqueta(texto: str, tag: str) -> str:
-    match = re.search(rf"<{tag}>(.*?)</{tag}>", texto, re.DOTALL | re.IGNORECASE)
-    return match.group(1).strip() if match else ""
+def crear_slug(texto: str) -> str:
+    palabras = re.sub(r"[^a-zA-Z0-9\s]", "", texto.lower()).split()[:5]
+    return "_".join(palabras) or "proyecto"
 
-def consultar_copiloto(descripcion_oferta: str) -> dict | None:
-    if not GEMINI_KEY:
-        print("[!] Falta GEMINI_API_KEY_FREE en el archivo .env")
-        return None
+def main() -> None:
+    print("\n=== MODULO B: COPILOTO DE CIERRE Y CODIGO ZERO-TOUCH v7.0 ===")
+    print("Opcion 1: Pega directamente un LINK de Reddit y dale Enter.")
+    print("Opcion 2: Pega el texto de la oferta, escribe FIN en una linea nueva y dale Enter.\n")
 
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_KEY
-    }
-    modelos = obtener_modelos_activos(headers)
+    primera = input("> ").strip()
+    if not primera:
+        print("[!] No ingresaste nada.")
+        return
+
+    if primera.startswith("http") and "reddit.com" in primera:
+        print("[*] Descargando post directamente desde Reddit...", flush=True)
+        oferta = descargar_post_reddit(primera)
+        if not oferta:
+            print("[!] Copia y pega el texto manual del post mejor.")
+            return
+        print(f"[+] Post cargado ({len(oferta)} caracteres).\n")
+    else:
+        lineas = [primera]
+        while True:
+            try:
+                linea = input()
+            except EOFError:
+                break
+            if linea.strip().upper() == "FIN":
+                break
+            lineas.append(linea)
+        oferta = "\n".join(lineas).strip()
+
     prompt = (
-        "Eres un desarrollador senior de Python y automatización ayudando a cerrar un cliente freelance.\n"
-        "Analiza esta oferta y responde ÚNICAMENTE usando exactamente estas 4 etiquetas XML (sin texto fuera de ellas):\n\n"
+        "Eres un desarrollador senior de Python y automatizacion ayudando a cerrar un cliente freelance.\n"
+        "Analiza esta oferta y responde UNICAMENTE usando estas 5 etiquetas XML (sin texto fuera):\n\n"
         "<DIAGNOSTICO>\n"
-        "Qué pide exactamente el cliente, qué stack usar y qué detalle técnico mencionar para demostrar dominio (2 líneas en español).\n"
+        "Que pide exactamente el cliente, que libreria usar y que detalle tecnico mencionar para demostrar dominio (2 lineas en espanol).\n"
         "</DIAGNOSTICO>\n\n"
         "<PRECIO>\n"
         "Rango justo en USD y tiempo estimado de entrega.\n"
         "</PRECIO>\n\n"
         "<PITCH>\n"
-        "Mensaje corto de respuesta en inglés natural (45-65 palabras), directo al grano, demostrando diagnóstico técnico inmediato, sin saludos robóticos ni clichés de IA.\n"
+        "Mensaje corto de respuesta inicial en ingles natural (45-65 palabras), directo al grano, demostrando diagnostico tecnico inmediato, sin saludos roboticos ni cliches de IA.\n"
         "</PITCH>\n\n"
+        "<MENSAJE_COBRO>\n"
+        "Mensaje corto y profesional en ingles (30-45 palabras) para enviar despues de mostrar una captura de avance y pedir el 50% de adelanto o pago final por USDT/PayPal/Airtm antes de entregar el script completo.\n"
+        "</MENSAJE_COBRO>\n\n"
         "<CODIGO>\n"
-        "Script completo y funcional en Python 3.12 (usando requests, bs4, csv o json según corresponda) listo como base para resolver el pedido, con comentarios claros y manejo de errores.\n"
+        "Script completo, modular y limpio en Python 3.12 listo como base funcional para resolver el pedido, con manejo de errores y exportacion ordenada.\n"
         "</CODIGO>\n\n"
-        f"OFERTA DEL CLIENTE:\n{descripcion_oferta}"
+        f"OFERTA DEL CLIENTE:\n{oferta}"
     )
 
-    for modelo in modelos:
-        print(f"[*] Probando con {modelo}...", flush=True)
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.3}
-        }
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
-        try:
-            r = requests.post(url, headers=headers, json=payload, timeout=25)
-            if r.status_code == 200:
-                texto = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                pitch = extraer_etiqueta(texto, "PITCH")
-                codigo = extraer_etiqueta(texto, "CODIGO")
-                if pitch or codigo:
-                    codigo = re.sub(r"^```(?:python)?\s*|\s*```$", "", codigo)
-                    print(f"[+] ¡Generado con {modelo}!", flush=True)
-                    return {
-                        "diagnostico_es": extraer_etiqueta(texto, "DIAGNOSTICO"),
-                        "precio_sugerido": extraer_etiqueta(texto, "PRECIO"),
-                        "pitch_en": pitch,
-                        "codigo_python": codigo
-                    }
-            else:
-                print(f"    [~] {modelo} respondió HTTP {r.status_code}, saltando...", flush=True)
-        except Exception as e:
-            print(f"    [~] {modelo} lento/error, saltando...", flush=True)
-
-    return None
-
-def main():
-    print("\n=== MÓDULO B: COPILOTO DE CIERRE Y CÓDIGO ZERO-TOUCH ===")
-    print("Pega la descripción de la oferta del cliente abajo.")
-    print("Cuando termines de pegar, escribe FIN en una línea nueva y dale Enter:\n")
-
-    lineas = []
-    while True:
-        try:
-            linea = input()
-        except EOFError:
-            break
-        if linea.strip().upper() == "FIN":
-            break
-        lineas.append(linea)
-
-    oferta = "\n".join(lineas).strip()
-    if not oferta:
-        print("[!] No pegaste ningún texto.")
+    print("[*] Generando pitch, mensaje de cobro y script base...", flush=True)
+    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=25)
+    if not texto:
+        print("[!] No se pudo generar respuesta en este momento.")
         return
 
-    res = consultar_copiloto(oferta)
-    if not res:
-        print("[!] Ningún modelo pudo responder en este momento. Intenta de nuevo en unos segundos.")
-        return
+    diag = extraer_etiqueta(texto, "DIAGNOSTICO")
+    precio = extraer_etiqueta(texto, "PRECIO")
+    pitch = extraer_etiqueta(texto, "PITCH")
+    cobro = extraer_etiqueta(texto, "MENSAJE_COBRO")
+    codigo = limpiar_bloque_codigo(extraer_etiqueta(texto, "CODIGO"))
 
-    print("\n" + "=" * 60)
-    print(f"🎯 DIAGNÓSTICO TÉCNICO:\n{res.get('diagnostico_es', '')}\n")
-    print(f"💵 PRECIO Y TIEMPO SUGERIDO:\n{res.get('precio_sugerido', '')}\n")
-    print("-" * 60)
-    print(f"📩 PITCH LISTO PARA COPIAR Y PEGAR EN DM:\n\n{res.get('pitch_en', '')}")
-    print("=" * 60)
+    copiado = copiar_al_portapapeles(pitch)
 
-    codigo = res.get("codigo_python", "")
+    print("\n" + "=" * 64)
+    print(f"DIAGNOSTICO TECNICO:\n{diag}\n")
+    print(f"PRECIO Y TIEMPO SUGERIDO:\n{precio}\n")
+    print("-" * 64)
+    print(f"PITCH INICIAL (EN INGLES):\n\n{pitch}\n")
+    if copiado:
+        print("[+] Pitch copiado automaticamente al portapapeles (solo haz Ctrl+V)!\n")
+    print("-" * 64)
+    print(f"MENSAJE PARA PEDIR PAGO AL MOSTRAR MUESTRA:\n\n{cobro}")
+    print("=" * 64)
+
     if codigo:
-        ruta_salida = os.path.join("modulo_b_ejecutor", "borrador_cliente.py")
-        with open(ruta_salida, "w", encoding="utf-8") as f:
+        ruta_borrador = os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
+        with open(ruta_borrador, "w", encoding="utf-8") as f:
             f.write(codigo)
-        print(f"\n✅ Script base guardado automáticamente en: {ruta_salida}")
-        print("   Ábrelo, ajusta la URL/selectores del cliente y ejecútalo.\n")
+
+        carpeta_proj = os.path.join(
+            ROOT_DIR,
+            "proyectos",
+            f"{datetime.now().strftime('%Y%m%d_%H%M')}_{crear_slug(oferta.splitlines()[0])}",
+        )
+        os.makedirs(carpeta_proj, exist_ok=True)
+        with open(os.path.join(carpeta_proj, "script.py"), "w", encoding="utf-8") as f:
+            f.write(codigo)
+        with open(os.path.join(carpeta_proj, "propuesta.txt"), "w", encoding="utf-8") as f:
+            f.write(f"DIAGNOSTICO:\n{diag}\n\nPRECIO:\n{precio}\n\nPITCH:\n{pitch}\n\nCOBRO:\n{cobro}\n")
+
+        print(f"\nScript base listo en : {ruta_borrador}")
+        print(f"Respaldo guardado en : {carpeta_proj}\n")
 
 if __name__ == "__main__":
     main()
-

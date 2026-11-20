@@ -1,5 +1,6 @@
-﻿.env
+.env
 *.db
 __pycache__/
+proyectos/
 modulo_b_ejecutor/borrador_cliente.py
 modulo_c_whop/producto_listo/
