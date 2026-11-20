@@ -36,6 +36,21 @@ class C:
     CYAN = "\033[96m"
     DIM = "\033[90m"
 
+DEFAULT_FUENTES_ACTIVAS = {
+    "reddit": True,
+    "freelancer": True,
+    "github_bounties": True,
+    "hackernews": True,
+    "remoteok": True,
+    "weworkremotely": True,
+    "remotive": True,
+    "jobicy": True,
+    "himalayas": True,
+    "workingnomads": True,
+    "arbeitnow": True,
+    "rss_custom": True,
+}
+
 DEFAULT_CONFIG = {
     "nombre_marca": "Cristian Dev | ZeroTouch Automation",
     "especialidad": "Python Scripting, Web Scraping, Telegram/Discord Bots, Data Extraction & Workflow Automation",
@@ -46,12 +61,16 @@ DEFAULT_CONFIG = {
     "tarifa_hora_usd": 25,
     "trm_cop": 4200,
     "score_minimo": 6,
-    "max_horas_post": 12,
-    "intervalo_sniper_seg": 70,
-    "max_ia_por_ciclo": 16,
+    "max_horas_post": 18,
+    "intervalo_sniper_seg": 75,
+    "max_ia_por_ciclo": 20,
+    "batch_ia_tamano": 5,
+    "solo_freelance_corto": False,
     "recordatorio_followup_horas": 20,
     "telegram_admin_id": "",
-    "palabras_extra_blacklist": []
+    "palabras_extra_blacklist": [],
+    "fuentes_activas": dict(DEFAULT_FUENTES_ACTIVAS),
+    "feeds_rss_custom": [],
 }
 
 STOPWORDS_FREELANCE = {
@@ -60,6 +79,7 @@ STOPWORDS_FREELANCE = {
     "code", "coding", "project", "usd", "usdt", "quick", "simple", "small", "make",
     "build", "create", "want", "that", "this", "from", "into", "and", "the", "you",
     "can", "will", "pay", "paying", "work", "job", "urgently", "urgent", "asap",
+    "remote", "contract", "engineer", "senior", "junior",
 }
 
 MAPA_PIP = {
@@ -91,7 +111,7 @@ MAPA_PIP = {
 }
 
 _LOG_LOCK = threading.Lock()
-_LOG_BUFFER: deque[str] = deque(maxlen=120)
+_LOG_BUFFER: deque[str] = deque(maxlen=150)
 
 def log_evento(msg: str, imprimir: bool = False) -> None:
     linea = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
@@ -146,7 +166,6 @@ def extraer_presupuesto_usd(texto: str) -> float:
         return 0.0
     t = str(texto)
 
-    # 1. Rango con prefijo de moneda: $80-$120, $1k-$2k, USD 100-200
     m_r1 = re.search(
         r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:-|–|to)\s*(?:\$|€)?(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?",
         t,
@@ -156,10 +175,9 @@ def extraer_presupuesto_usd(texto: str) -> float:
         a = _parse_monto_k(m_r1.group(1), m_r1.group(2))
         b = _parse_monto_k(m_r1.group(3), m_r1.group(4))
         prom = round((a + b) / 2.0, 2)
-        if 5 <= prom <= 50000:
+        if 5 <= prom <= 250000:
             return prom
 
-    # 2. Rango con moneda al final: 50-150 USD, 1k-2k USDT
     m_r2 = re.search(
         r"\b(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:-|–|to)\s*(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:USD|USDT|bucks|\$|€)\b",
         t,
@@ -169,21 +187,19 @@ def extraer_presupuesto_usd(texto: str) -> float:
         a = _parse_monto_k(m_r2.group(1), m_r2.group(2))
         b = _parse_monto_k(m_r2.group(3), m_r2.group(4))
         prom = round((a + b) / 2.0, 2)
-        if 5 <= prom <= 50000:
+        if 5 <= prom <= 250000:
             return prom
 
-    # 3. Valor unico con prefijo: $1.5k, $150, USD 200
     m_pref = re.search(r"(?:\$|€|USD\s*|USDT\s*)(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\b", t, re.IGNORECASE)
     if m_pref:
         v = _parse_monto_k(m_pref.group(1), m_pref.group(2))
-        if 5 <= v <= 50000:
+        if 5 <= v <= 250000:
             return round(v, 2)
 
-    # 4. Valor unico con sufijo: 250 USDT, 1.5k USD, 100$
     m_suf = re.search(r"\b(\d{1,5}(?:,\d{3})*(?:\.\d+)?)(k)?\s*(?:USD|USDT|bucks|\$|€)\b", t, re.IGNORECASE)
     if m_suf:
         v = _parse_monto_k(m_suf.group(1), m_suf.group(2))
-        if 5 <= v <= 50000:
+        if 5 <= v <= 250000:
             return round(v, 2)
 
     return 0.0
@@ -206,12 +222,19 @@ cargar_env()
 
 def cargar_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
+    cfg["fuentes_activas"] = dict(DEFAULT_FUENTES_ACTIVAS)
+    cfg["feeds_rss_custom"] = []
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, encoding="utf-8-sig") as f:
                 user_cfg = json.load(f)
                 if isinstance(user_cfg, dict):
+                    user_fuentes = user_cfg.get("fuentes_activas")
                     cfg.update(user_cfg)
+                    merged_fuentes = dict(DEFAULT_FUENTES_ACTIVAS)
+                    if isinstance(user_fuentes, dict):
+                        merged_fuentes.update(user_fuentes)
+                    cfg["fuentes_activas"] = merged_fuentes
         except Exception as e:
             log_evento(f"Aviso leyendo config.json: {e}")
     else:
@@ -240,7 +263,7 @@ TRUST_CACHE: dict[str, tuple[float, str]] = {}
 def crear_sesion_http() -> requests.Session:
     s = requests.Session()
     retry = Retry(total=2, backoff_factor=0.6, status_forcelist=[500, 502, 504])
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=28, pool_maxsize=28)
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=36, pool_maxsize=36)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     return s
@@ -263,6 +286,20 @@ def parsear_json_seguro(texto: str) -> dict | None:
         try:
             obj, _ = decoder.raw_decode(limpio[match.start():])
             if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return None
+
+def parsear_json_cualquiera(texto: str) -> dict | list | None:
+    if not texto:
+        return None
+    limpio = limpiar_bloque_codigo(texto)
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[\{]", limpio):
+        try:
+            obj, _ = decoder.raw_decode(limpio[match.start():])
+            if isinstance(obj, (dict, list)):
                 return obj
         except json.JSONDecodeError:
             continue
@@ -323,6 +360,8 @@ def preparar_db() -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
             fuente TEXT,
+            plataforma TEXT DEFAULT '',
+            tipo_trabajo TEXT DEFAULT 'freelance',
             autor TEXT DEFAULT '',
             titulo TEXT,
             categoria TEXT,
@@ -343,6 +382,8 @@ def preparar_db() -> sqlite3.Connection:
     )
     cols_l = [row[1] for row in conn.execute("PRAGMA table_info(leads)").fetchall()]
     for col_name, col_def in [
+        ("plataforma", "TEXT DEFAULT ''"),
+        ("tipo_trabajo", "TEXT DEFAULT 'freelance'"),
         ("autor", "TEXT DEFAULT ''"),
         ("presupuesto_num", "REAL DEFAULT 0"),
         ("competencia", "TEXT DEFAULT ''"),
@@ -357,6 +398,7 @@ def preparar_db() -> sqlite3.Connection:
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_estado ON leads(estado)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_link ON leads(link)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_tipo ON leads(tipo_trabajo)")
 
     conn.execute(
         """
@@ -375,9 +417,63 @@ def preparar_db() -> sqlite3.Connection:
         if col_name not in cols_s:
             conn.execute(f"ALTER TABLE stats_diarias ADD COLUMN {col_name} {col_def}")
 
-    conn.execute("DELETE FROM vistos WHERE post_id NOT IN (SELECT post_id FROM vistos ORDER BY ts DESC LIMIT 6000)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS salud_fuentes (
+            fuente TEXT PRIMARY KEY,
+            clave_config TEXT DEFAULT '',
+            ok INTEGER DEFAULT 1,
+            modo TEXT DEFAULT '',
+            bruto INTEGER DEFAULT 0,
+            tech INTEGER DEFAULT 0,
+            ultimo_error TEXT DEFAULT '',
+            actualizado_ts DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    conn.execute("DELETE FROM vistos WHERE post_id NOT IN (SELECT post_id FROM vistos ORDER BY ts DESC LIMIT 10000)")
     conn.commit()
     return conn
+
+def registrar_salud_fuentes(conn: sqlite3.Connection, detalle_fuentes: list[dict]) -> None:
+    for m in detalle_fuentes:
+        conn.execute(
+            """
+            INSERT INTO salud_fuentes (fuente, clave_config, ok, modo, bruto, tech, ultimo_error, actualizado_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(fuente) DO UPDATE SET
+                clave_config = excluded.clave_config,
+                ok = excluded.ok,
+                modo = excluded.modo,
+                bruto = excluded.bruto,
+                tech = excluded.tech,
+                ultimo_error = excluded.ultimo_error,
+                actualizado_ts = CURRENT_TIMESTAMP
+            """,
+            (
+                str(m.get("fuente", "desconocida")),
+                str(m.get("clave_config", "")),
+                1 if m.get("ok") else 0,
+                str(m.get("modo", "")),
+                safe_int(m.get("bruto", 0), 0),
+                safe_int(m.get("tech", 0), 0),
+                str(m.get("error", ""))[:200],
+            ),
+        )
+    conn.commit()
+
+def obtener_salud_fuentes(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT fuente, clave_config, ok, modo, bruto, tech, ultimo_error, actualizado_ts FROM salud_fuentes ORDER BY fuente ASC"
+    ).fetchall()
+    return [
+        {
+            "fuente": r[0], "clave_config": r[1], "ok": bool(r[2]), "modo": r[3],
+            "bruto": r[4], "tech": r[5], "ultimo_error": r[6], "actualizado_ts": r[7],
+        }
+        for r in rows
+    ]
 
 def registrar_metricas(conn: sqlite3.Connection, descartados: int = 0, ia: int = 0, alertas: int = 0, tok_usados: int = 0, tok_ahorrados: int = 0) -> None:
     hoy = datetime.now().strftime("%Y-%m-%d")
@@ -442,7 +538,7 @@ def listar_scripts_disponibles() -> list[dict]:
 
 def verificar_confianza_reddit(autor: str) -> str:
     if not autor or autor.lower() in ("[deleted]", "automoderator", "none", "github", "hackernews"):
-        return "🔎 Fuente externa"
+        return "🔎 Plataforma externa"
     clave = autor.lower()
     ahora = time.time()
     with _CACHE_LOCK:
@@ -452,7 +548,7 @@ def verificar_confianza_reddit(autor: str) -> str:
     try:
         r = SESSION.get(
             f"https://www.reddit.com/user/{autor}/about.json",
-            headers={"User-Agent": "python:zerotouch-trust:v12.5 (by /u/zerotouch_freelance)"},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             timeout=6,
         )
         if r.status_code == 200:
@@ -475,7 +571,7 @@ def verificar_confianza_reddit(autor: str) -> str:
         TRUST_CACHE[clave] = (ahora, res)
     return res
 
-def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 26) -> str | None:
+def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 28) -> str | None:
     api_key = os.getenv("GEMINI_API_KEY_FREE")
     if not api_key:
         log_evento("[!] Falta GEMINI_API_KEY_FREE en .env")
@@ -528,9 +624,13 @@ def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = Fa
     log_evento("[!] Ningun modelo de Gemini respondio en este intento")
     return None
 
-def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 16) -> dict | None:
+def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 18) -> dict | None:
     texto = generar_texto_ia(prompt, temperatura=temperatura, json_mode=True, timeout=timeout)
     return parsear_json_seguro(texto) if texto else None
+
+def generar_json_lote_ia(prompt: str, temperatura: float = 0.2, timeout: int = 26) -> dict | list | None:
+    texto = generar_texto_ia(prompt, temperatura=temperatura, json_mode=True, timeout=timeout)
+    return parsear_json_cualquiera(texto) if texto else None
 
 def analizar_dependencias(codigo: str) -> tuple[list[str], list[str]]:
     todos_pip = set()

@@ -1,0 +1,1 @@
+# Paquete modular ZeroTouch OMNI-GRID v13.0
