@@ -6,6 +6,7 @@ import json
 import time
 import shutil
 import sqlite3
+import threading
 import subprocess
 import importlib.util
 import requests
@@ -42,6 +43,7 @@ DEFAULT_CONFIG = {
     "github_url": "https://github.com/cristianch19840-byte",
     "whop_url": "",
     "tarifa_hora_usd": 25,
+    "trm_cop": 4200,
     "score_minimo": 6,
     "max_horas_post": 12,
     "intervalo_sniper_seg": 70,
@@ -78,6 +80,22 @@ MAPA_PIP = {
     "telethon": "telethon",
     "pyrogram": "pyrogram",
 }
+
+def safe_float(val, default: float = 0.0) -> float:
+    try:
+        if val is None or val == "":
+            return default
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+def safe_int(val, default: int = 0) -> int:
+    try:
+        if val is None or val == "":
+            return default
+        return int(float(val))
+    except (ValueError, TypeError):
+        return default
 
 def cargar_env(ruta: str | None = None) -> None:
     archivo = ruta or os.path.join(ROOT_DIR, ".env")
@@ -118,6 +136,7 @@ MODELOS_PREFERIDOS = [
     "gemini-flash-latest",
 ]
 
+_CACHE_LOCK = threading.Lock()
 MODEL_COOLDOWNS: dict[str, float] = {}
 TRUST_CACHE: dict[str, tuple[float, str]] = {}
 
@@ -276,13 +295,14 @@ def verificar_confianza_reddit(autor: str) -> str:
         return "🔎 Fuente externa"
     clave = autor.lower()
     ahora = time.time()
-    if clave in TRUST_CACHE and (ahora - TRUST_CACHE[clave][0]) < 3600:
-        return TRUST_CACHE[clave][1]
+    with _CACHE_LOCK:
+        if clave in TRUST_CACHE and (ahora - TRUST_CACHE[clave][0]) < 3600:
+            return TRUST_CACHE[clave][1]
     res = "🔎 Sin historial publico"
     try:
         r = SESSION.get(
             f"https://www.reddit.com/user/{autor}/about.json",
-            headers={"User-Agent": "python:zerotouch-trust:v10.0 (by /u/zerotouch_freelance)"},
+            headers={"User-Agent": "python:zerotouch-trust:v11.0 (by /u/zerotouch_freelance)"},
             timeout=6,
         )
         if r.status_code == 200:
@@ -301,7 +321,8 @@ def verificar_confianza_reddit(autor: str) -> str:
                     res = f"🚨 OJO cuenta nueva ({edad_txt} | {karma_txt} karma) — pide 50%"
     except Exception:
         pass
-    TRUST_CACHE[clave] = (ahora, res)
+    with _CACHE_LOCK:
+        TRUST_CACHE[clave] = (ahora, res)
     return res
 
 def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 24) -> str | None:
@@ -315,7 +336,8 @@ def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = Fa
         "x-goog-api-key": api_key,
     }
     ahora = time.time()
-    candidatos = [m for m in MODELOS_PREFERIDOS if MODEL_COOLDOWNS.get(m, 0) <= ahora]
+    with _CACHE_LOCK:
+        candidatos = [m for m in MODELOS_PREFERIDOS if MODEL_COOLDOWNS.get(m, 0) <= ahora]
     if not candidatos:
         candidatos = list(MODELOS_PREFERIDOS)
 
@@ -343,7 +365,8 @@ def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = Fa
                         print(f"    {C.DIM}[AI] OK con {modelo}{C.RESET}", flush=True)
                         return partes[0]["text"]
             elif r.status_code in (429, 503):
-                MODEL_COOLDOWNS[modelo] = time.time() + 60
+                with _CACHE_LOCK:
+                    MODEL_COOLDOWNS[modelo] = time.time() + 60
                 print(f"    {C.YELLOW}[~] {modelo} ocupado ({r.status_code}), cooldown 60s...{C.RESET}", flush=True)
             else:
                 print(f"    {C.YELLOW}[~] {modelo} HTTP {r.status_code}, saltando...{C.RESET}", flush=True)

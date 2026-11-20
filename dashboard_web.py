@@ -4,6 +4,7 @@ import re
 import csv
 import sys
 import json
+import time
 import socket
 import zipfile
 import threading
@@ -18,6 +19,8 @@ if ROOT_DIR not in sys.path:
 from core_ia import (
     C,
     SESSION,
+    safe_float,
+    safe_int,
     cargar_config,
     guardar_config,
     preparar_db,
@@ -34,23 +37,23 @@ from modulo_c_whop.empaquetador import crear_factura_html
 from modulo_d_marketing.iman_clientes import responder_objecion_ia
 
 SCAN_LOCK = threading.Lock()
-SCAN_STATE = {"running": False, "last_result": None}
+SCAN_STATE = {"running": False, "last_result": None, "sniper_on": False, "sniper_ciclos": 0}
+SNIPER_STOP = threading.Event()
 
 HTML_DASHBOARD = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ZeroTouch PRIME v10.5 — Freelance OS</title>
+<title>ZeroTouch TITAN v11.0 — Freelance OS</title>
 <style>
   :root {
     --bg:#060911; --sidebar:#0b1120; --card:#0f172a; --card2:#162033;
     --border:#1e293b; --text:#f1f5f9; --muted:#94a3b8;
-    --accent:#38bdf8; --accent2:#2563eb; --green:#4ade80; --amber:#fbbf24; --red:#f87171; --purple:#c084fc;
+    --accent:#38bdf8; --green:#4ade80; --amber:#fbbf24; --red:#f87171; --purple:#c084fc;
   }
   * { box-sizing:border-box; }
   body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
-  /* SIDEBAR */
   .side { width:245px; background:var(--sidebar); border-right:1px solid var(--border); padding:20px 14px; display:flex; flex-direction:column; position:fixed; inset:0 auto 0 0; overflow-y:auto; }
   .brand { font-size:18px; font-weight:800; padding:4px 10px 16px; border-bottom:1px solid var(--border); margin-bottom:14px; }
   .brand span { color:var(--accent); }
@@ -61,7 +64,6 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   .nav-btn.active { background:linear-gradient(135deg,#0284c7,#2563eb); color:#fff; box-shadow:0 4px 14px rgba(37,99,235,.35); }
   .side-foot { margin-top:auto; padding-top:14px; border-top:1px solid var(--border); font-size:11px; color:#64748b; text-align:center; }
 
-  /* MAIN */
   .main { margin-left:245px; flex:1; padding:24px 28px; max-width:calc(100% - 245px); }
   .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px; }
   .topbar h2 { margin:0; font-size:20px; }
@@ -69,29 +71,30 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   button, a.btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; text-decoration:none; transition:.15s; display:inline-flex; align-items:center; gap:6px; }
   button:hover, a.btn:hover { background:#334155; border-color:var(--accent); }
   button.primary { background:linear-gradient(135deg,#0284c7,#2563eb); border:none; color:#fff; }
-  button.primary:hover { filter:brightness(1.1); }
   button.success { background:#065f46; border-color:#10b981; color:#ecfdf5; }
   button.purple { background:#581c87; border-color:#a855f7; color:#faf5ff; }
-  button.sm { padding:5px 10px; font-size:12px; }
+  button.danger { background:#7f1d1d; border-color:#ef4444; color:#fef2f2; }
+  button.sniper-on { background:#14532d; border-color:#4ade80; color:#86efac; box-shadow:0 0 14px rgba(74,222,128,.25); }
+  button.sm { padding:5px 9px; font-size:12px; }
 
   .view { display:none; animation:fade .18s ease; }
   .view.active { display:block; }
   @keyframes fade { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 
-  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:13px; margin-bottom:18px; }
-  .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
-  .kpi .lbl { font-size:11px; text-transform:uppercase; color:var(--muted); letter-spacing:.06em; }
-  .kpi .num { font-size:25px; font-weight:800; margin-top:6px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:18px; }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:15px 17px; }
+  .kpi .lbl { font-size:10.5px; text-transform:uppercase; color:var(--muted); letter-spacing:.06em; }
+  .kpi .num { font-size:24px; font-weight:800; margin-top:5px; }
   .green { color:var(--green); } .cyan { color:var(--accent); } .amber { color:var(--amber); } .purple { color:var(--purple); }
 
   .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
-  input, select, textarea { background:#080d19; color:var(--text); border:1px solid #334155; padding:9px 11px; border-radius:8px; font-size:13px; font-family:inherit; }
+  input, select, textarea { background:#080d19; color:var(--text); border:1px solid #334155; padding:8px 11px; border-radius:8px; font-size:13px; font-family:inherit; }
   input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
-  textarea { width:100%; min-height:92px; resize:vertical; }
+  textarea { width:100%; min-height:90px; resize:vertical; }
 
   .table-box { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:auto; }
-  table { width:100%; border-collapse:collapse; min-width:980px; }
-  th, td { padding:11px 13px; border-bottom:1px solid var(--border); text-align:left; font-size:13px; vertical-align:middle; }
+  table { width:100%; border-collapse:collapse; min-width:1100px; }
+  th, td { padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; font-size:13px; vertical-align:middle; }
   th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; background:#0b1220; }
   tr:hover { background:#131d31; }
   .score { display:inline-block; padding:3px 8px; border-radius:6px; font-weight:700; font-size:12px; }
@@ -100,15 +103,19 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   a.title-link { color:#e2e8f0; text-decoration:none; font-weight:600; }
   a.title-link:hover { color:var(--accent); text-decoration:underline; }
   .meta { font-size:11.5px; color:var(--muted); margin-top:3px; }
-  .usd-in { width:74px; }
+  .usd-in { width:70px; }
+  .note-in { width:135px; font-size:12px; padding:6px 8px; }
 
-  .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:16px; }
+  .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(390px,1fr)); gap:16px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; }
   .card h3 { margin:0 0 12px 0; font-size:15px; color:var(--accent); }
   .field { margin-bottom:12px; }
   .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; font-weight:600; }
   .field input, .field select { width:100%; }
-  .prebox { background:#060911; border:1px solid #334155; border-radius:8px; padding:12px; white-space:pre-wrap; font-size:12.5px; line-height:1.5; max-height:240px; overflow:auto; }
+  .prebox { background:#060911; border:1px solid #334155; border-radius:8px; padding:12px; white-space:pre-wrap; font-size:12.5px; line-height:1.5; max-height:240px; overflow:auto; font-family:Consolas,monospace; }
+  .calc-box { background:#060911; border:1px solid #1e293b; border-radius:10px; padding:16px; margin-top:14px; }
+  .calc-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #1e293b; font-size:13px; }
+  .calc-row:last-child { border:none; font-size:17px; font-weight:800; color:var(--green); padding-top:10px; }
 
   .bar-row { margin-bottom:11px; }
   .bar-lbl { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; }
@@ -118,7 +125,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
   .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.75); display:none; align-items:center; justify-content:center; padding:20px; z-index:99; }
   .modal-bg.open { display:flex; }
-  .modal { background:var(--card); border:1px solid #334155; border-radius:14px; max-width:820px; width:100%; max-height:88vh; overflow:auto; padding:24px; }
+  .modal { background:var(--card); border:1px solid #334155; border-radius:14px; max-width:860px; width:100%; max-height:88vh; overflow:auto; padding:24px; }
 
   .toast { position:fixed; bottom:22px; right:22px; background:#0f172a; border:1px solid var(--accent); color:#fff; padding:11px 16px; border-radius:10px; font-size:13px; font-weight:600; box-shadow:0 10px 30px rgba(0,0,0,.5); opacity:0; transform:translateY(12px); pointer-events:none; transition:.2s; z-index:120; }
   .toast.show { opacity:1; transform:none; }
@@ -128,27 +135,28 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 </head>
 <body>
   <aside class="side">
-    <div class="brand">⚡ ZeroTouch <span>PRIME</span><small>v10.5 Unified Freelance OS</small></div>
+    <div class="brand">⚡ ZeroTouch <span>TITAN</span><small>v11.0 Unified Freelance OS</small></div>
     <div class="nav-grp">Operacion</div>
     <button class="nav-btn active" onclick="verTab('t_crm','📡 Radar & CRM',this)">📡 Radar & CRM</button>
     <button class="nav-btn" onclick="verTab('t_stats','📊 Analytics',this)">📊 Analytics</button>
     <div class="nav-grp">Estudio IA</div>
     <button class="nav-btn" onclick="verTab('t_ai','🧠 Copiloto & Negociador',this)">🧠 Copiloto & Negociador</button>
     <div class="nav-grp">Negocio</div>
-    <button class="nav-btn" onclick="verTab('t_mkt','🧲 Marketing & Iman',this)">🧲 Marketing & Iman</button>
-    <button class="nav-btn" onclick="verTab('t_whop','📦 Whop & Facturas',this)">📦 Whop & Facturas</button>
+    <button class="nav-btn" onclick="verTab('t_mkt','🧲 Marketing & Portafolio',this)">🧲 Marketing & Portafolio</button>
+    <button class="nav-btn" onclick="verTab('t_whop','📦 Whop, Facturas & Calc',this)">📦 Whop, Facturas & Calc</button>
     <div class="nav-grp">Sistema</div>
     <button class="nav-btn" onclick="verTab('t_cfg','⚙️ Ajustes & Salud',this)">⚙️ Ajustes & Salud</button>
-    <div class="side-foot">100% Local • SQLite WAL</div>
+    <div class="side-foot">SQLite WAL • 16 Fuentes • AST</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
       <h2 id="pageTitle">📡 Radar & CRM</h2>
       <div class="actions">
-        <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear 16 Fuentes</button>
-        <button onclick="cargarDatos()">🔄 Refrescar</button>
-        <a class="btn" href="/api/export">📥 Excel (.CSV)</a>
+        <button id="btnSniper" onclick="toggleSniper()">🎯 Auto-Sniper: OFF</button>
+        <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear Ahora</button>
+        <button onclick="cargarDatos()">🔄</button>
+        <a class="btn" href="/api/export">📥 Excel</a>
       </div>
     </div>
 
@@ -156,14 +164,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <section id="t_crm" class="view active">
       <div class="kpis">
         <div class="kpi"><div class="lbl">Facturado Total</div><div class="num green" id="kUsd">$0.00</div></div>
-        <div class="kpi"><div class="lbl">Leads Capturados</div><div class="num cyan" id="kLeads">0</div></div>
+        <div class="kpi"><div class="lbl">Leads Totales</div><div class="num cyan" id="kLeads">0</div></div>
         <div class="kpi"><div class="lbl">Clientes Ganados</div><div class="num green" id="kGanados">0</div></div>
-        <div class="kpi"><div class="lbl">Basura 0-Tokens</div><div class="num amber" id="kAhorro">0</div></div>
+        <div class="kpi"><div class="lbl">Tasa de Cierre</div><div class="num cyan" id="kCierre">0%</div></div>
         <div class="kpi"><div class="lbl">Tokens Ahorrados</div><div class="num purple" id="kTok">0</div></div>
       </div>
 
       <div class="toolbar">
-        <input type="text" id="qSearch" placeholder="Buscar titulo, subreddit o categoria..." oninput="renderTabla()" style="min-width:250px;">
+        <input type="text" id="qSearch" placeholder="Buscar titulo, subreddit, nota o categoria..." oninput="renderTabla()" style="min-width:260px;">
         <select id="qEstado" onchange="renderTabla()">
           <option value="">Todos los estados</option>
           <option value="nuevo">Nuevo</option>
@@ -183,7 +191,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div class="table-box">
         <table>
           <thead>
-            <tr><th>ID</th><th>Score</th><th>Fuente</th><th>Proyecto, Competencia & Cliente</th><th>Presupuesto</th><th>Estado</th><th>USD</th><th>Acciones</th></tr>
+            <tr><th>ID</th><th>Score</th><th>Fuente</th><th>Proyecto, Competencia & Cliente</th><th>Presupuesto</th><th>Estado</th><th>USD</th><th>Nota rapida</th><th>Acciones</th></tr>
           </thead>
           <tbody id="tbodyLeads"></tbody>
         </table>
@@ -204,7 +212,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <section id="t_ai" class="view">
       <div class="grid-2">
         <div class="card">
-          <h3>🤖 Copiloto PRIME (Link Reddit, #ID o Texto)</h3>
+          <h3>🤖 Copiloto TITAN (Link Reddit, #ID o Texto)</h3>
           <div class="field"><textarea id="aiOferta" placeholder="Pega un link de Reddit, escribe #4, o pega la descripcion del cliente..."></textarea></div>
           <button class="primary" onclick="correrCopilotoWeb()">Generar Pitch A/B + Precios + Codigo</button>
           <div id="aiResCopiloto" style="margin-top:14px;"></div>
@@ -219,7 +227,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </section>
 
-    <!-- 4. MARKETING -->
+    <!-- 4. MARKETING & PORTAFOLIO -->
     <section id="t_mkt" class="view">
       <div class="grid-2">
         <div class="card">
@@ -233,29 +241,55 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <option value="r/freelance_forhire">r/freelance_forhire</option>
             </select>
           </div>
-          <div class="field"><label>Enfoque (opcional, vacio usa tu config)</label><input id="mktEnf" placeholder="Python Scraping, Bots Telegram/Discord & Automation"></div>
+          <div class="field"><label>Enfoque (opcional)</label><input id="mktEnf" placeholder="Python Scraping, Bots Telegram/Discord & Automation"></div>
           <button class="primary" onclick="generarPostWeb()">Redactar Post Magnetico</button>
           <div id="resMktPost" style="margin-top:14px;"></div>
         </div>
         <div class="card">
-          <h3>✨ Bios Profesionales (Reddit, GitHub, Whop)</h3>
-          <p class="meta" style="margin-bottom:14px;">Genera 3 bios optimizadas en ingles basadas en tu especialidad para dar confianza inmediata.</p>
-          <button class="purple" onclick="generarBiosWeb()">Generar 3 Bios Ahora</button>
-          <div id="resMktBios" style="margin-top:14px;"></div>
+          <h3>✨ Bios & Portafolio Profesional</h3>
+          <div class="actions" style="margin-bottom:14px;">
+            <button class="purple" onclick="generarBiosWeb()">✨ Generar 3 Bios</button>
+            <button class="success" onclick="generarPortafolioWeb()">📂 Generar PORTAFOLIO.md</button>
+          </div>
+          <div id="resMktBios"></div>
         </div>
       </div>
     </section>
 
-    <!-- 5. WHOP & FACTURAS -->
+    <!-- 5. WHOP, FACTURAS & CALCULADORA -->
     <section id="t_whop" class="view">
       <div class="grid-2">
         <div class="card">
-          <h3>📦 Fabrica 1-Click de Productos para Whop (.ZIP)</h3>
-          <div class="field"><label>Nombre comercial de tu herramienta</label><input id="whopNom" placeholder="Ej. AutoLead Scraper Pro"></div>
-          <div class="field"><label>Ruta del script (vacio usa borrador_cliente.py)</label><input id="whopRuta" placeholder="modulo_b_ejecutor/borrador_cliente.py"></div>
-          <button class="purple" onclick="empaquetarWhopWeb()">Empaquetar .ZIP + Copy + Guion Short</button>
-          <div id="resWhop" style="margin-top:14px;"></div>
+          <h3>🧮 Calculadora Freelance (USD → COP Neto)</h3>
+          <div class="grid-2" style="grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="field"><label>Horas estimadas</label><input id="calcHrs" type="number" value="4" oninput="calcularPrecio()"></div>
+            <div class="field"><label>Tarifa/Hora (USD)</label><input id="calcRate" type="number" value="25" oninput="calcularPrecio()"></div>
+          </div>
+          <div class="grid-2" style="grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="field"><label>Complejidad / Urgencia</label>
+              <select id="calcMult" onchange="calcularPrecio()">
+                <option value="1">Normal (1.0x)</option>
+                <option value="1.25">Complejo / API dificil (1.25x)</option>
+                <option value="1.5">Urgente hoy mismo (1.5x)</option>
+              </select>
+            </div>
+            <div class="field"><label>Pasarela de Cobro</label>
+              <select id="calcFee" onchange="calcularPrecio()">
+                <option value="binance">Binance USDT (0%)</option>
+                <option value="airtm">Airtm (~2%)</option>
+                <option value="paypal">PayPal (5.4% + $0.30)</option>
+              </select>
+            </div>
+          </div>
+          <div class="field"><label>TRM Referencia (COP por 1 USD)</label><input id="calcTrm" type="number" value="4200" oninput="calcularPrecio()"></div>
+          <div class="calc-box">
+            <div class="calc-row"><span>Precio sugerido al cliente</span><b id="cBruto">$100.00 USD</b></div>
+            <div class="calc-row"><span>Comision pasarela</span><b id="cCom" style="color:var(--red);">-$0.00 USD</b></div>
+            <div class="calc-row"><span>Neto en tu bolsillo (USD)</span><b id="cNetoUsd" style="color:var(--accent);">$100.00 USD</b></div>
+            <div class="calc-row"><span>Neto aproximado en Colombia</span><b id="cNetoCop">$420,000 COP</b></div>
+          </div>
         </div>
+
         <div class="card">
           <h3>📄 Factura + Micro-Contrato PDF</h3>
           <div class="field"><label>Cliente / Usuario</label><input id="invCli" placeholder="u/john_founder"></div>
@@ -269,6 +303,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </select>
           </div>
           <button class="success" onclick="generarFacturaWeb()">Abrir Factura Lista para PDF</button>
+          <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;">
+          <h3>📦 Fabrica 1-Click para Whop (.ZIP)</h3>
+          <div class="field"><label>Nombre comercial</label><input id="whopNom" placeholder="Ej. AutoLead Scraper Pro"></div>
+          <div class="field"><label>Ruta script (vacio = borrador_cliente.py)</label><input id="whopRuta" placeholder="modulo_b_ejecutor/borrador_cliente.py"></div>
+          <button class="purple" onclick="empaquetarWhopWeb()">Empaquetar .ZIP + Copy + Guion</button>
+          <div id="resWhop" style="margin-top:12px;"></div>
         </div>
       </div>
     </section>
@@ -289,17 +329,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <div class="field"><label>Score Min</label><input id="cScore" type="number"></div>
             <div class="field"><label>Sniper (s)</label><input id="cSniper" type="number"></div>
           </div>
-          <div class="field"><label>Telegram Admin ID (para control remoto DM)</label><input id="cAdmin" placeholder="Opcional: tu ID numerico personal"></div>
+          <div class="field"><label>Telegram Admin ID (control remoto DM)</label><input id="cAdmin" placeholder="Opcional"></div>
           <button class="primary" onclick="guardarConfigWeb()">💾 Guardar Configuracion</button>
         </div>
         <div class="card">
           <h3>🩺 Salud del Sistema & Respaldos</h3>
-          <p class="meta" style="margin-bottom:14px;">Verifica en tiempo real tus conexiones de Reddit, Telegram y Gemini, o crea un respaldo de tu base de datos SQLite.</p>
           <div class="actions" style="margin-bottom:14px;">
             <button class="primary" onclick="correrDiagWeb()">🩺 Probar Conexiones</button>
-            <button class="success" onclick="hacerBackupWeb()">💾 Backup Base de Datos</button>
+            <button class="success" onclick="hacerBackupWeb()">💾 Backup DB</button>
           </div>
-          <div id="resDiag" class="prebox">Haz clic en "Probar Conexiones" para revisar todo el sistema.</div>
+          <div id="resDiag" class="prebox">Haz clic en "Probar Conexiones" para revisar Reddit, Telegram y Gemini.</div>
         </div>
       </div>
     </section>
@@ -308,7 +347,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   <div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()">
     <div class="modal">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto PRIME</h3>
+        <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto TITAN</h3>
         <button class="sm" onclick="cerrarModal()">Cerrar</button>
       </div>
       <div id="modalBody">Cargando...</div>
@@ -322,7 +361,7 @@ const CLIP_STORE = {};
 let CLIP_SEQ = 0;
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 2400); }
+function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 2500); }
 function regClip(txt){ const id = 'c' + (++CLIP_SEQ); CLIP_STORE[id] = String(txt || ''); return id; }
 function copyId(id){ navigator.clipboard.writeText(CLIP_STORE[id] || ''); toast('✅ Copiado al portapapeles'); }
 function cerrarModal(){ document.getElementById('modalBg').classList.remove('open'); }
@@ -334,16 +373,52 @@ function verTab(id, title, btn){
   document.getElementById('pageTitle').textContent = title;
   btn.classList.add('active');
   if(id === 't_cfg') cargarConfigWeb();
+  if(id === 't_whop') calcularPrecio();
+}
+
+function calcularPrecio(){
+  const hrs = parseFloat(document.getElementById('calcHrs').value || '0');
+  const rate = parseFloat(document.getElementById('calcRate').value || '0');
+  const mult = parseFloat(document.getElementById('calcMult').value || '1');
+  const feeType = document.getElementById('calcFee').value;
+  const trm = parseFloat(document.getElementById('calcTrm').value || '4200');
+  const bruto = hrs * rate * mult;
+  let com = 0;
+  if(feeType === 'paypal' && bruto > 0) com = bruto * 0.054 + 0.30;
+  else if(feeType === 'airtm') com = bruto * 0.02;
+  const neto = Math.max(0, bruto - com);
+  const cop = Math.round(neto * trm);
+  document.getElementById('cBruto').textContent = '$' + bruto.toFixed(2) + ' USD';
+  document.getElementById('cCom').textContent = '-$' + com.toFixed(2) + ' USD';
+  document.getElementById('cNetoUsd').textContent = '$' + neto.toFixed(2) + ' USD';
+  document.getElementById('cNetoCop').textContent = '$' + cop.toLocaleString('es-CO') + ' COP';
+}
+
+async function toggleSniper(){
+  const r = await fetch('/api/sniper_toggle', { method:'POST' });
+  const d = await r.json();
+  toast(d.sniper_on ? '🎯 Auto-Sniper ACTIVADO en segundo plano' : '⏹️ Auto-Sniper detenido');
+  await cargarDatos();
 }
 
 async function cargarDatos(){
   const r = await fetch('/api/data');
   DATA = await r.json();
   document.getElementById('kUsd').textContent = '$' + Number(DATA.kpis.usd || 0).toFixed(2);
-  document.getElementById('kLeads').textContent = DATA.kpis.leads;
+  document.getElementById('kLeads').textContent = DATA.kpis.leads_total;
   document.getElementById('kGanados').textContent = DATA.kpis.ganados;
-  document.getElementById('kAhorro').textContent = DATA.kpis.descartados;
+  document.getElementById('kCierre').textContent = DATA.kpis.tasa_cierre + '%';
   document.getElementById('kTok').textContent = Number(DATA.kpis.tok_ahorrados || 0).toLocaleString();
+
+  const bSnip = document.getElementById('btnSniper');
+  if(DATA.scan.sniper_on){
+    bSnip.className = 'sniper-on';
+    bSnip.textContent = `🎯 Auto-Sniper: ON (#${DATA.scan.sniper_ciclos})`;
+  } else {
+    bSnip.className = '';
+    bSnip.textContent = '🎯 Auto-Sniper: OFF';
+  }
+
   const st = document.getElementById('scanStatus');
   if(DATA.scan.running){ st.textContent = '⏳ Escaneando 16 fuentes en segundo plano...'; }
   else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; st.textContent = `✅ Ultimo barrido: ${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
@@ -355,9 +430,9 @@ function renderTabla(){
   const q = document.getElementById('qSearch').value.toLowerCase();
   const est = document.getElementById('qEstado').value;
   const minS = parseInt(document.getElementById('qMinScore').value || '0', 10);
-  const filtrados = (DATA.leads || []).filter(l => l.score >= minS && (!est || l.estado === est) && (!q || (l.titulo+' '+l.fuente+' '+l.categoria).toLowerCase().includes(q)));
+  const filtrados = (DATA.leads || []).filter(l => l.score >= minS && (!est || l.estado === est) && (!q || (l.titulo+' '+l.fuente+' '+l.categoria+' '+(l.notas||'')).toLowerCase().includes(q)));
   const tb = document.getElementById('tbodyLeads');
-  if(!filtrados.length){ tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:28px;">Sin leads para este filtro. Haz clic en "Escanear 16 Fuentes".</td></tr>'; return; }
+  if(!filtrados.length){ tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px;">Sin leads para este filtro. Haz clic en "Escanear Ahora".</td></tr>'; return; }
   tb.innerHTML = filtrados.map(l => `
     <tr>
       <td><b>#${l.id}</b></td>
@@ -375,9 +450,11 @@ function renderTabla(){
         </select>
       </td>
       <td><input class="usd-in" type="number" step="1" id="usd_${l.id}" value="${l.ganancia_usd || 0}"></td>
+      <td><input class="note-in" type="text" id="not_${l.id}" value="${esc(l.notas || '')}" placeholder="Nota..."></td>
       <td style="white-space:nowrap;">
-        <button class="success sm" onclick="guardarLead(${l.id})">Guardar</button>
-        <button class="purple sm" onclick="abrirCopilotoLead(${l.id})">🤖 IA</button>
+        <button class="success sm" onclick="guardarLead(${l.id})" title="Guardar">💾</button>
+        <button class="purple sm" onclick="abrirCopilotoLead(${l.id})" title="Copiloto IA">🤖</button>
+        <button class="danger sm" onclick="borrarLead(${l.id})" title="Eliminar">🗑️</button>
       </td>
     </tr>
   `).join('');
@@ -412,14 +489,23 @@ function renderAnalytics(){
 
 async function guardarLead(id){
   const estado = document.getElementById('est_'+id).value;
-  const usd = parseFloat(document.getElementById('usd_'+id).value || 0);
-  await fetch('/api/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, estado, usd}) });
-  toast(`✅ Lead #${id} actualizado`);
+  const rawUsd = document.getElementById('usd_'+id).value;
+  const usd = rawUsd === '' ? 0 : (parseFloat(rawUsd) || 0);
+  const notas = document.getElementById('not_'+id).value || '';
+  await fetch('/api/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, estado, usd, notas}) });
+  toast(`✅ Lead #${id} guardado`);
+  await cargarDatos();
+}
+
+async function borrarLead(id){
+  if(!confirm(`Eliminar el lead #${id} de tu CRM?`)) return;
+  await fetch('/api/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+  toast(`🗑️ Lead #${id} eliminado`);
   await cargarDatos();
 }
 
 async function lanzarEscaneo(){
-  document.getElementById('scanStatus').textContent = '⏳ Iniciando escaneo PRIME...';
+  document.getElementById('scanStatus').textContent = '⏳ Iniciando escaneo TITAN...';
   toast('🚀 Escaneo de 16 fuentes iniciado');
   await fetch('/api/scan', { method:'POST' });
   setTimeout(cargarDatos, 2000);
@@ -427,7 +513,7 @@ async function lanzarEscaneo(){
 
 function renderBloqueCopiloto(res){
   if(!res || res.error) return `<div style="color:var(--red);">Error: ${esc(res ? res.error : 'Sin respuesta')}</div>`;
-  const idA = regClip(res.pitch_a), idB = regClip(res.pitch_b), idC = regClip(res.micro_contrato);
+  const idA = regClip(res.pitch_a), idB = regClip(res.pitch_b), idC = regClip(res.micro_contrato), idCode = regClip(res.codigo);
   return `
     ${res.confianza ? `<div class="meta" style="margin-bottom:8px;color:var(--purple);font-weight:700;">${esc(res.confianza)}</div>` : ''}
     <div class="field"><label>Diagnostico</label><div class="prebox">${esc(res.diagnostico)}</div></div>
@@ -435,13 +521,14 @@ function renderBloqueCopiloto(res){
     <div class="field"><label>Pitch A (Tecnico) <button class="sm" onclick="copyId('${idA}')">Copiar</button> ${res.dm_url ? `<a class="btn sm" href="${esc(res.dm_url)}" target="_blank">⚡ DM Reddit</a>` : ''}</label><div class="prebox">${esc(res.pitch_a)}</div></div>
     <div class="field"><label>Pitch B (Consultivo) <button class="sm" onclick="copyId('${idB}')">Copiar</button></label><div class="prebox">${esc(res.pitch_b)}</div></div>
     <div class="field"><label>Micro-Contrato <button class="sm" onclick="copyId('${idC}')">Copiar</button></label><div class="prebox">${esc(res.micro_contrato)}</div></div>
-    <div class="meta">✅ Script base verificado con AST en modulo_b_ejecutor/borrador_cliente.py</div>
+    ${res.codigo ? `<div class="field"><label>Codigo Python (${res.ast_valido ? '✅ AST OK' : '⚠️ Revisar'}) <button class="sm" onclick="copyId('${idCode}')">Copiar Codigo</button></label><div class="prebox">${esc(res.codigo)}</div></div>` : ''}
+    <div class="meta">Guardado automaticamente en modulo_b_ejecutor/borrador_cliente.py</div>
   `;
 }
 
 async function abrirCopilotoLead(id){
-  document.getElementById('modalTitle').textContent = '🤖 Copiloto PRIME — Lead #' + id;
-  document.getElementById('modalBody').innerHTML = '⏳ Analizando post y generando Pitch A/B + Codigo...';
+  document.getElementById('modalTitle').textContent = '🤖 Copiloto TITAN — Lead #' + id;
+  document.getElementById('modalBody').innerHTML = '⏳ Analizando post y generando Pitch A/B + Codigo Python...';
   document.getElementById('modalBg').classList.add('open');
   const r = await fetch('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada: '#' + id}) });
   document.getElementById('modalBody').innerHTML = renderBloqueCopiloto(await r.json());
@@ -450,7 +537,7 @@ async function abrirCopilotoLead(id){
 async function correrCopilotoWeb(){
   const entrada = document.getElementById('aiOferta').value.trim();
   if(!entrada) return toast('⚠️ Pega un link, #ID o texto primero');
-  document.getElementById('aiResCopiloto').innerHTML = '⏳ Generando estrategia, pitches y script...';
+  document.getElementById('aiResCopiloto').innerHTML = '⏳ Generando estrategia, pitches y codigo...';
   const r = await fetch('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada}) });
   document.getElementById('aiResCopiloto').innerHTML = renderBloqueCopiloto(await r.json());
 }
@@ -486,7 +573,7 @@ async function generarPostWeb(){
 }
 
 async function generarBiosWeb(){
-  document.getElementById('resMktBios').innerHTML = '⏳ Generando bios...';
+  document.getElementById('resMktBios').innerHTML = '⏳ Generando 3 bios...';
   const r = await fetch('/api/mkt_bios', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
   const d = await r.json();
   if(d.error){ document.getElementById('resMktBios').innerHTML = esc(d.error); return; }
@@ -498,6 +585,19 @@ async function generarBiosWeb(){
   `;
 }
 
+async function generarPortafolioWeb(){
+  document.getElementById('resMktBios').innerHTML = '⏳ Construyendo PORTAFOLIO.md profesional...';
+  const r = await fetch('/api/mkt_portfolio', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+  const d = await r.json();
+  if(d.error){ document.getElementById('resMktBios').innerHTML = esc(d.error); return; }
+  const idP = regClip(d.markdown);
+  document.getElementById('resMktBios').innerHTML = `
+    <div class="meta" style="color:var(--green);margin-bottom:8px;">✅ Guardado en PORTAFOLIO.md</div>
+    <div class="field"><label>PORTAFOLIO.md <button class="sm" onclick="copyId('${idP}')">Copiar Markdown</button></label><div class="prebox">${esc(d.markdown)}</div></div>
+  `;
+  toast('📂 PORTAFOLIO.md creado');
+}
+
 async function empaquetarWhopWeb(){
   const nombre = document.getElementById('whopNom').value.trim() || 'ZeroTouch Automation Tool';
   const ruta = document.getElementById('whopRuta').value.trim();
@@ -507,7 +607,7 @@ async function empaquetarWhopWeb(){
   if(d.error){ document.getElementById('resWhop').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
   const idW = regClip(d.whop_copy);
   document.getElementById('resWhop').innerHTML = `
-    <div class="meta" style="color:var(--green);margin-bottom:8px;">✅ ZIP listo en: ${esc(d.zip_path)}</div>
+    <div class="meta" style="color:var(--green);margin-bottom:8px;">✅ ZIP listo: ${esc(d.zip_path)}</div>
     <div class="field"><label>Copy de Ventas Whop <button class="sm" onclick="copyId('${idW}')">Copiar</button></label><div class="prebox">${esc(d.whop_copy)}</div></div>
   `;
   toast('📦 Paquete Whop generado');
@@ -539,6 +639,8 @@ async function cargarConfigWeb(){
   document.getElementById('cScore').value = c.score_minimo || 6;
   document.getElementById('cSniper').value = c.intervalo_sniper_seg || 70;
   document.getElementById('cAdmin').value = c.telegram_admin_id || '';
+  document.getElementById('calcRate').value = c.tarifa_hora_usd || 25;
+  document.getElementById('calcTrm').value = c.trm_cop || 4200;
 }
 
 async function guardarConfigWeb(){
@@ -588,6 +690,15 @@ def correr_scan_bg() -> None:
         SCAN_STATE["running"] = False
         SCAN_LOCK.release()
 
+def loop_sniper_web() -> None:
+    while not SNIPER_STOP.is_set():
+        SCAN_STATE["sniper_ciclos"] += 1
+        correr_scan_bg()
+        intervalo = max(45, safe_int(cargar_config().get("intervalo_sniper_seg", 70), 70))
+        if SNIPER_STOP.wait(intervalo):
+            break
+    SCAN_STATE["sniper_on"] = False
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
@@ -629,7 +740,7 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     lineas.append(f"4. Telegram API      : Error ({e})")
             try:
-                rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v10.5"}, timeout=6)
+                rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v11.0"}, timeout=6)
                 lineas.append(f"5. Reddit API        : {'OK (JSON en vivo)' if rr.status_code == 200 else 'Fallback XML Nativo (HTTP ' + str(rr.status_code) + ')'}")
             except Exception as e:
                 lineas.append(f"5. Reddit API        : Error ({e})")
@@ -640,25 +751,32 @@ class Handler(BaseHTTPRequestHandler):
             conn = preparar_db()
             try:
                 rows = conn.execute(
-                    "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, link, estado, ganancia_usd FROM leads ORDER BY id DESC LIMIT 150"
+                    "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, link, estado, ganancia_usd, notas FROM leads ORDER BY id DESC LIMIT 150"
                 ).fetchall()
                 leads = [
                     {
                         "id": r[0], "fecha": r[1], "fuente": r[2], "autor": r[3], "titulo": r[4],
                         "categoria": r[5], "presupuesto": r[6], "score": r[7], "competencia": r[8],
-                        "confianza": r[9], "prioridad_tag": r[10], "link": r[11], "estado": r[12], "ganancia_usd": r[13],
+                        "confianza": r[9], "prioridad_tag": r[10], "link": r[11], "estado": r[12],
+                        "ganancia_usd": r[13], "notas": r[14] or "",
                     }
                     for r in rows
                 ]
+                leads_total = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
                 usd = conn.execute("SELECT COALESCE(SUM(ganancia_usd), 0) FROM leads WHERE estado = 'ganado'").fetchone()[0]
                 ganados = conn.execute("SELECT COUNT(*) FROM leads WHERE estado = 'ganado'").fetchone()[0]
+                activos_neg = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('contactado','negociando','ganado')").fetchone()[0]
+                tasa = round((ganados / activos_neg) * 100) if activos_neg > 0 else 0
                 st_row = conn.execute("SELECT COALESCE(SUM(descartados_local), 0), COALESCE(SUM(tokens_est_usados), 0), COALESCE(SUM(tokens_est_ahorrados), 0) FROM stats_diarias").fetchone()
                 por_fuente = conn.execute("SELECT fuente, COUNT(*) FROM leads GROUP BY fuente ORDER BY COUNT(*) DESC LIMIT 7").fetchall()
                 embudo = conn.execute("SELECT estado, COUNT(*) FROM leads GROUP BY estado ORDER BY COUNT(*) DESC").fetchall()
                 usd_cat = conn.execute("SELECT categoria, ROUND(SUM(ganancia_usd), 2) FROM leads WHERE estado = 'ganado' GROUP BY categoria ORDER BY SUM(ganancia_usd) DESC LIMIT 6").fetchall()
                 payload = {
                     "leads": leads,
-                    "kpis": {"usd": usd, "leads": len(leads), "ganados": ganados, "descartados": st_row[0], "tok_usados": st_row[1], "tok_ahorrados": st_row[2]},
+                    "kpis": {
+                        "usd": usd, "leads_total": leads_total, "ganados": ganados, "tasa_cierre": tasa,
+                        "descartados": st_row[0], "tok_usados": st_row[1], "tok_ahorrados": st_row[2],
+                    },
                     "analytics": {"por_fuente": por_fuente, "embudo": embudo, "usd_categoria": usd_cat},
                     "scan": SCAN_STATE,
                 }
@@ -669,16 +787,16 @@ class Handler(BaseHTTPRequestHandler):
             conn = preparar_db()
             try:
                 rows = conn.execute(
-                    "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, estado, ganancia_usd, link FROM leads ORDER BY id DESC"
+                    "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, estado, ganancia_usd, notas, link FROM leads ORDER BY id DESC"
                 ).fetchall()
                 buf = io.StringIO()
                 w = csv.writer(buf)
-                w.writerow(["ID", "Fecha", "Fuente", "Autor", "Titulo", "Categoria", "Presupuesto", "Score", "Competencia", "Confianza", "Tag", "Estado", "Ganancia_USD", "Link"])
+                w.writerow(["ID", "Fecha", "Fuente", "Autor", "Titulo", "Categoria", "Presupuesto", "Score", "Competencia", "Confianza", "Tag", "Estado", "Ganancia_USD", "Notas", "Link"])
                 w.writerows(rows)
                 data = ("\ufeff" + buf.getvalue()).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Disposition", f'attachment; filename="crm_prime_{datetime.now().strftime("%Y%m%d")}.csv"')
+                self.send_header("Content-Disposition", f'attachment; filename="crm_titan_{datetime.now().strftime("%Y%m%d")}.csv"')
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -693,9 +811,22 @@ class Handler(BaseHTTPRequestHandler):
             conn = preparar_db()
             try:
                 conn.execute(
-                    "UPDATE leads SET estado = ?, ganancia_usd = ? WHERE id = ?",
-                    (str(data.get("estado", "nuevo")), float(data.get("usd", 0)), int(data.get("id"))),
+                    "UPDATE leads SET estado = ?, ganancia_usd = ?, notas = ? WHERE id = ?",
+                    (
+                        str(data.get("estado", "nuevo")),
+                        safe_float(data.get("usd", 0), 0.0),
+                        str(data.get("notas", ""))[:300],
+                        safe_int(data.get("id", 0), 0),
+                    ),
                 )
+                conn.commit()
+            finally:
+                conn.close()
+            self._send(200, "application/json", b'{"ok": true}')
+        elif self.path == "/api/delete":
+            conn = preparar_db()
+            try:
+                conn.execute("DELETE FROM leads WHERE id = ?", (safe_int(data.get("id", 0), 0),))
                 conn.commit()
             finally:
                 conn.close()
@@ -703,6 +834,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/scan":
             threading.Thread(target=correr_scan_bg, daemon=True).start()
             self._send(200, "application/json", b'{"started": true}')
+        elif self.path == "/api/sniper_toggle":
+            if SCAN_STATE["sniper_on"]:
+                SNIPER_STOP.set()
+                SCAN_STATE["sniper_on"] = False
+            else:
+                SNIPER_STOP.clear()
+                SCAN_STATE["sniper_on"] = True
+                threading.Thread(target=loop_sniper_web, daemon=True).start()
+            self._send(200, "application/json", json.dumps({"sniper_on": SCAN_STATE["sniper_on"]}).encode("utf-8"))
         elif self.path == "/api/backup":
             dst = crear_backup_rotativo()
             self._send(200, "application/json", json.dumps({"path": dst}).encode("utf-8"))
@@ -749,6 +889,28 @@ class Handler(BaseHTTPRequestHandler):
             txt = generar_texto_ia(prompt, temperatura=0.4)
             out = {"reddit": extraer_etiqueta(txt, "REDDIT_BIO"), "github": extraer_etiqueta(txt, "GITHUB_BIO"), "whop": extraer_etiqueta(txt, "WHOP_BIO")} if txt else {"error": "IA no respondio"}
             self._send(200, "application/json; charset=utf-8", json.dumps(out).encode("utf-8"))
+        elif self.path == "/api/mkt_portfolio":
+            cfg = cargar_config()
+            conn = preparar_db()
+            try:
+                ganados = conn.execute("SELECT titulo, categoria FROM leads WHERE estado = 'ganado' ORDER BY id DESC LIMIT 6").fetchall()
+            finally:
+                conn.close()
+            prompt = (
+                "Crea un archivo PORTAFOLIO.md profesional y directo en ingles para GitHub y clientes freelance.\n"
+                f"Marca: {cfg.get('nombre_marca')}\nEspecialidad: {cfg.get('especialidad')}\n"
+                f"Proyectos ganados: {ganados}\nPagos: {cfg.get('metodos_pago')}\n"
+                "Incluye resumen, stack tecnico, 3 casos de estudio (ZeroTouch 24/7 Lead Radar, Python Scrapers, Telegram Bots) y CTA.\n"
+                "Devuelve UNICAMENTE el contenido dentro de <PORTAFOLIO>...</PORTAFOLIO>."
+            )
+            txt = generar_texto_ia(prompt, temperatura=0.35)
+            if not txt:
+                self._send(200, "application/json", json.dumps({"error": "IA no respondio"}).encode("utf-8"))
+                return
+            md = extraer_etiqueta(txt, "PORTAFOLIO") or txt
+            with open(os.path.join(ROOT_DIR, "PORTAFOLIO.md"), "w", encoding="utf-8") as f:
+                f.write(md)
+            self._send(200, "application/json; charset=utf-8", json.dumps({"markdown": md}).encode("utf-8"))
         elif self.path == "/api/whop_pack":
             nombre = str(data.get("nombre", "ZeroTouch Tool")).strip()
             ruta = str(data.get("ruta", "")).strip() or os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
@@ -807,12 +969,13 @@ def main() -> None:
         webbrowser.open(url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
-    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH PRIME v10.5 WEB OS: {url} ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH TITAN v11.0 WEB OS: {url} ==={C.RESET}")
     print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
     webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        SNIPER_STOP.set()
         print(f"\n{C.YELLOW}[*] Servidor web cerrado.{C.RESET}\n")
     finally:
         server.server_close()
