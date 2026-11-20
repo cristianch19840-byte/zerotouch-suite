@@ -1,15 +1,20 @@
-﻿name: Radar Zero-Touch v5
+name: Radar Zero-Touch v9 OMEGA
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
+
+concurrency:
+  group: zerotouch-omega-radar
+  cancel-in-progress: false
 
 jobs:
   radar:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Descargar codigo
+      - name: Clonar repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Python 3.12
@@ -20,17 +25,19 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Restaurar base de datos de vistos
+      - name: Restaurar cache de leads vistos
         uses: actions/cache@v4
         with:
           path: estado_radar_v4.db
-          key: radar-db-${{ github.run_id }}
+          key: radar-db-v9-${{ github.run_id }}
           restore-keys: |
-            radar-db-
+            radar-db-v9-
+            radar-db-v8-
 
-      - name: Ejecutar Radar Zero-Touch
+      - name: Ejecutar Radar OMEGA v9.0
         env:
           GEMINI_API_KEY_FREE: ${{ secrets.GEMINI_API_KEY_FREE }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python modulo_a_radar_whop/motor_zerotouch_v4.py

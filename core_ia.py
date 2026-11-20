@@ -1,18 +1,83 @@
 import os
 import re
+import ast
 import sys
 import json
+import time
+import sqlite3
 import subprocess
 import requests
+from datetime import datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-def cargar_env(ruta: str = ".env") -> None:
-    if os.path.exists(ruta):
-        with open(ruta, encoding="utf-8-sig") as f:
+if os.name == "nt":
+    os.system("")
+
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(ROOT_DIR, "estado_radar_v4.db")
+CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
+
+class C:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    DIM = "\033[90m"
+
+DEFAULT_CONFIG = {
+    "nombre_marca": "Cristian Dev | ZeroTouch Automation",
+    "especialidad": "Python Scripting, Web Scraping, Telegram/Discord Bots, Data Extraction & Workflow Automation",
+    "metodos_pago": "Binance Pay (USDT TRC20/BEP20), Airtm, or PayPal",
+    "detalle_pago_factura": "Binance Pay / USDT (TRC20) | Airtm | PayPal (solicitar correo/ID en chat)",
+    "github_url": "https://github.com/cristianch19840-byte",
+    "whop_url": "",
+    "score_minimo": 6,
+    "max_horas_post": 12,
+    "intervalo_sniper_seg": 75,
+    "max_ia_por_ciclo": 15,
+    "palabras_extra_blacklist": []
+}
+
+MAPA_PIP = {
+    "bs4": "beautifulsoup4",
+    "PIL": "pillow",
+    "cv2": "opencv-python",
+    "yaml": "pyyaml",
+    "dotenv": "python-dotenv",
+    "sklearn": "scikit-learn",
+    "telegram": "python-telegram-bot",
+    "discord": "discord.py",
+    "docx": "python-docx",
+    "openpyxl": "openpyxl",
+    "pandas": "pandas",
+    "selenium": "selenium",
+    "playwright": "playwright",
+    "requests": "requests",
+    "httpx": "httpx",
+    "aiohttp": "aiohttp",
+    "lxml": "lxml",
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "flask": "flask",
+    "pydantic": "pydantic",
+    "tweepy": "tweepy",
+    "praw": "praw",
+    "telethon": "telethon",
+    "pyrogram": "pyrogram",
+}
+
+def cargar_env(ruta: str | None = None) -> None:
+    archivo = ruta or os.path.join(ROOT_DIR, ".env")
+    if os.path.exists(archivo):
+        with open(archivo, encoding="utf-8-sig") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -20,6 +85,25 @@ def cargar_env(ruta: str = ".env") -> None:
                     os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 cargar_env()
+
+def cargar_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+                user_cfg = json.load(f)
+                if isinstance(user_cfg, dict):
+                    cfg.update(user_cfg)
+        except Exception:
+            pass
+    else:
+        if not os.getenv("GITHUB_ACTIONS"):
+            guardar_config(cfg)
+    return cfg
+
+def guardar_config(cfg: dict) -> None:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
 
 MODELOS_PREFERIDOS = [
     "gemini-3.5-flash-lite",
@@ -29,10 +113,12 @@ MODELOS_PREFERIDOS = [
     "gemini-flash-latest",
 ]
 
+MODEL_COOLDOWNS: dict[str, float] = {}
+
 def crear_sesion_http() -> requests.Session:
     s = requests.Session()
-    retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 504])
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=12, pool_maxsize=12)
+    retry = Retry(total=2, backoff_factor=0.6, status_forcelist=[500, 502, 504])
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=24, pool_maxsize=24)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     return s
@@ -55,18 +141,131 @@ def copiar_al_portapapeles(texto: str) -> bool:
     except Exception:
         return False
 
-def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 20) -> str | None:
+def alerta_sonora(prioridad: str = "alta") -> None:
+    if os.name != "nt":
+        return
+    try:
+        import winsound
+        if prioridad == "alta":
+            winsound.Beep(1150, 120)
+            winsound.Beep(1550, 160)
+        else:
+            winsound.Beep(900, 110)
+    except Exception:
+        pass
+
+def preparar_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS vistos (post_id TEXT PRIMARY KEY, titulo_norm TEXT DEFAULT '', ts DATETIME DEFAULT CURRENT_TIMESTAMP)"
+    )
+    cols_v = [row[1] for row in conn.execute("PRAGMA table_info(vistos)").fetchall()]
+    if "titulo_norm" not in cols_v:
+        conn.execute("ALTER TABLE vistos ADD COLUMN titulo_norm TEXT DEFAULT ''")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            fuente TEXT,
+            autor TEXT DEFAULT '',
+            titulo TEXT,
+            categoria TEXT,
+            presupuesto TEXT,
+            score INTEGER,
+            competencia TEXT DEFAULT '',
+            confianza TEXT DEFAULT '',
+            link TEXT,
+            estado TEXT DEFAULT 'nuevo',
+            ganancia_usd REAL DEFAULT 0,
+            notas TEXT DEFAULT ''
+        )
+        """
+    )
+    cols_l = [row[1] for row in conn.execute("PRAGMA table_info(leads)").fetchall()]
+    for col_name, col_def in [
+        ("autor", "TEXT DEFAULT ''"),
+        ("competencia", "TEXT DEFAULT ''"),
+        ("confianza", "TEXT DEFAULT ''"),
+        ("notas", "TEXT DEFAULT ''"),
+    ]:
+        if col_name not in cols_l:
+            conn.execute(f"ALTER TABLE leads ADD COLUMN {col_name} {col_def}")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stats_diarias (
+            fecha TEXT PRIMARY KEY,
+            descartados_local INTEGER DEFAULT 0,
+            evaluados_ia INTEGER DEFAULT 0,
+            alertas_enviadas INTEGER DEFAULT 0
+        )
+        """
+    )
+    conn.execute("DELETE FROM vistos WHERE post_id NOT IN (SELECT post_id FROM vistos ORDER BY ts DESC LIMIT 5000)")
+    conn.commit()
+    return conn
+
+def registrar_metricas(conn: sqlite3.Connection, descartados: int = 0, ia: int = 0, alertas: int = 0) -> None:
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    conn.execute("INSERT OR IGNORE INTO stats_diarias (fecha) VALUES (?)", (hoy,))
+    conn.execute(
+        """
+        UPDATE stats_diarias
+        SET descartados_local = descartados_local + ?,
+            evaluados_ia = evaluados_ia + ?,
+            alertas_enviadas = alertas_enviadas + ?
+        WHERE fecha = ?
+        """,
+        (descartados, ia, alertas, hoy),
+    )
+    conn.commit()
+
+def verificar_confianza_reddit(autor: str) -> str:
+    if not autor or autor.lower() in ("[deleted]", "automoderator", "none", "github", "hackernews"):
+        return "🔎 Fuente externa"
+    try:
+        r = SESSION.get(
+            f"https://www.reddit.com/user/{autor}/about.json",
+            headers={"User-Agent": "python:zerotouch-trust:v9.0 (by /u/zerotouch_freelance)"},
+            timeout=6,
+        )
+        if r.status_code == 200:
+            d = r.json().get("data", {})
+            creado = d.get("created_utc")
+            karma = int(d.get("total_karma", 0))
+            if creado:
+                dias = max(0, int((time.time() - creado) / 86400))
+                edad_txt = f"{dias // 365}a" if dias >= 365 else (f"{dias // 30}m" if dias >= 30 else f"{dias}d")
+                karma_txt = f"{karma / 1000:.1f}k" if karma >= 1000 else str(karma)
+                if dias >= 180 and karma >= 100:
+                    return f"🛡️ Confiable ({edad_txt} | {karma_txt} karma)"
+                if dias >= 30 and karma >= 15:
+                    return f"🟢 Normal ({edad_txt} | {karma_txt} karma)"
+                return f"🚨 OJO cuenta nueva ({edad_txt} | {karma_txt} karma) — pide 50%"
+    except Exception:
+        pass
+    return "🔎 Sin historial publico"
+
+def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 24) -> str | None:
     api_key = os.getenv("GEMINI_API_KEY_FREE")
     if not api_key:
-        print("    [!] Falta GEMINI_API_KEY_FREE.", flush=True)
+        print(f"    {C.RED}[!] Falta GEMINI_API_KEY_FREE.{C.RESET}", flush=True)
         return None
 
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": api_key,
     }
+    ahora = time.time()
+    candidatos = [m for m in MODELOS_PREFERIDOS if MODEL_COOLDOWNS.get(m, 0) <= ahora]
+    if not candidatos:
+        candidatos = list(MODELOS_PREFERIDOS)
 
-    for modelo in MODELOS_PREFERIDOS:
+    for modelo in candidatos:
         gen_config: dict = {"temperature": temperatura}
         if json_mode and "gemma" not in modelo.lower():
             gen_config["responseMimeType"] = "application/json"
@@ -83,20 +282,23 @@ def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = Fa
                 r = SESSION.post(url, headers=headers, json=payload, timeout=timeout)
 
             if r.status_code == 200:
-                candidatos = r.json().get("candidates", [])
-                if candidatos:
-                    partes = candidatos[0].get("content", {}).get("parts", [])
+                cands = r.json().get("candidates", [])
+                if cands:
+                    partes = cands[0].get("content", {}).get("parts", [])
                     if partes and "text" in partes[0]:
-                        print(f"    [AI] OK con {modelo}", flush=True)
+                        print(f"    {C.DIM}[AI] OK con {modelo}{C.RESET}", flush=True)
                         return partes[0]["text"]
+            elif r.status_code in (429, 503):
+                MODEL_COOLDOWNS[modelo] = time.time() + 60
+                print(f"    {C.YELLOW}[~] {modelo} ocupado ({r.status_code}), en cooldown 60s...{C.RESET}", flush=True)
             else:
-                print(f"    [~] {modelo} HTTP {r.status_code}, probando respaldo...", flush=True)
+                print(f"    {C.YELLOW}[~] {modelo} HTTP {r.status_code}, saltando...{C.RESET}", flush=True)
         except Exception:
-            print(f"    [~] {modelo} timeout/error, probando respaldo...", flush=True)
+            print(f"    {C.YELLOW}[~] {modelo} timeout/error, saltando...{C.RESET}", flush=True)
 
     return None
 
-def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 15) -> dict | None:
+def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 16) -> dict | None:
     texto = generar_texto_ia(prompt, temperatura=temperatura, json_mode=True, timeout=timeout)
     if not texto:
         return None
@@ -107,3 +309,49 @@ def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 15) ->
         return json.loads(match.group(0))
     except json.JSONDecodeError:
         return None
+
+def detectar_paquetes_externos(codigo: str) -> list[str]:
+    paquetes = set()
+    stdlib = getattr(sys, "stdlib_module_names", set())
+    try:
+        tree = ast.parse(codigo)
+        for node in ast.walk(tree):
+            mod = None
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    mod = alias.name.split(".")[0]
+                    if mod not in stdlib and mod not in ("core_ia",):
+                        paquetes.add(MAPA_PIP.get(mod, mod))
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                mod = node.module.split(".")[0]
+                if mod not in stdlib and mod not in ("core_ia",):
+                    paquetes.add(MAPA_PIP.get(mod, mod))
+    except SyntaxError:
+        pass
+    return sorted(paquetes)
+
+def validar_y_reparar_python(codigo: str, descripcion: str = "") -> tuple[str, bool]:
+    codigo = limpiar_bloque_codigo(codigo)
+    if not codigo:
+        return "", False
+    try:
+        ast.parse(codigo)
+        return codigo, True
+    except SyntaxError as e:
+        print(f"    {C.YELLOW}[!] SyntaxError detectado en linea {e.lineno} ({e.msg}). Auto-reparando con IA...{C.RESET}", flush=True)
+        fix_prompt = (
+            f"Corrige este error de sintaxis en Python 3.12: linea {e.lineno}, error: {e.msg}.\n"
+            f"Contexto: {descripcion[:200]}\n"
+            "Devuelve UNICAMENTE el codigo Python corregido dentro de <CODIGO_FIX>...</CODIGO_FIX>:\n\n"
+            f"{codigo}"
+        )
+        resp = generar_texto_ia(fix_prompt, temperatura=0.1, json_mode=False, timeout=22)
+        if resp:
+            fijo = limpiar_bloque_codigo(extraer_etiqueta(resp, "CODIGO_FIX") or resp)
+            try:
+                ast.parse(fijo)
+                print(f"    {C.GREEN}[+] Codigo auto-reparado y validado con AST!{C.RESET}", flush=True)
+                return fijo, True
+            except SyntaxError:
+                return fijo, False
+        return codigo, False
