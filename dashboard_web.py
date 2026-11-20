@@ -17,22 +17,29 @@ if ROOT_DIR not in sys.path:
 from core_ia import (
     C,
     SESSION,
+    DEFAULT_FUENTES_ACTIVAS,
     safe_float,
     safe_int,
+    safe_bool,
     log_evento,
     obtener_logs,
     cargar_config,
     guardar_config,
     preparar_db,
+    obtener_salud_fuentes,
     crear_backup_rotativo,
     listar_scripts_disponibles,
     generar_texto_ia,
     extraer_etiqueta,
 )
-from modulo_a_radar_whop.motor_zerotouch_v4 import ejecutar_ciclo, evaluar_y_enviar
+from modulo_a_radar_whop.motor_zerotouch_v4 import (
+    ejecutar_ciclo,
+    evaluar_y_enviar,
+    diagnosticar_reddit_real,
+)
 from modulo_b_ejecutor.copiloto import (
-    descargar_post_reddit,
-    cargar_desde_crm,
+    descargar_oferta_universal,
+    cargar_desde_crm_completo,
     analizar_oferta_completo,
     leer_borrador_actual,
     refinar_borrador_ia,
@@ -49,12 +56,27 @@ SNIPER_LOCK = threading.Lock()
 SCAN_STATE = {"running": False, "last_result": None, "sniper_on": False, "sniper_ciclos": 0}
 CURRENT_SNIPER_STOP: threading.Event | None = None
 
+CATALOGO_PLATAFORMAS = [
+    {"clave": "reddit", "nombre": "Reddit Omni", "tipo": "freelance", "desc": "16 Subreddits + 2 Busquedas Globales (Anti-403)"},
+    {"clave": "freelancer", "nombre": "Freelancer.com", "tipo": "freelance", "desc": "API oficial con presupuestos USD y contador de bids"},
+    {"clave": "github_bounties", "nombre": "GitHub Bounties", "tipo": "bounty", "desc": "Issues pagos con label bounty, Algora y Opire"},
+    {"clave": "hackernews", "nombre": "HackerNews", "tipo": "freelance", "desc": "Hilos freelance y contratos Python (Algolia API)"},
+    {"clave": "remoteok", "nombre": "RemoteOK", "tipo": "remoto", "desc": "Bolsa remota global con salarios y tags dev"},
+    {"clave": "weworkremotely", "nombre": "We Work Remotely", "tipo": "remoto", "desc": "Feeds oficiales Programming y Back-End"},
+    {"clave": "remotive", "nombre": "Remotive", "tipo": "remoto", "desc": "Vacantes y contratos remotos de software"},
+    {"clave": "jobicy", "nombre": "Jobicy", "tipo": "remoto", "desc": "Roles tech remotos con rangos salariales"},
+    {"clave": "himalayas", "nombre": "Himalayas", "tipo": "remoto", "desc": "API moderna de empleos y contratos remotos"},
+    {"clave": "workingnomads", "nombre": "Working Nomads", "tipo": "remoto", "desc": "Bolsa internacional de contratos y dev remoto"},
+    {"clave": "arbeitnow", "nombre": "Arbeitnow", "tipo": "remoto", "desc": "Tech remoto Europa / Global (filtrado remote=True)"},
+    {"clave": "rss_custom", "nombre": "Feeds RSS Custom", "tipo": "custom", "desc": "Tus propios links RSS/Atom personalizados"},
+]
+
 HTML_DASHBOARD = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ZeroTouch APEX v12.9 — Freelance OS</title>
+<title>ZeroTouch OMNI-GRID v13.0 — Freelance OS</title>
 <style>
   :root {
     --bg:#060911; --sidebar:#0b1120; --card:#0f172a; --card2:#162033;
@@ -63,7 +85,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   }
   * { box-sizing:border-box; }
   body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
-  .side { width:248px; background:var(--sidebar); border-right:1px solid var(--border); padding:20px 14px; display:flex; flex-direction:column; position:fixed; inset:0 auto 0 0; overflow-y:auto; }
+  .side { width:250px; background:var(--sidebar); border-right:1px solid var(--border); padding:20px 14px; display:flex; flex-direction:column; position:fixed; inset:0 auto 0 0; overflow-y:auto; }
   .brand { font-size:18px; font-weight:800; padding:4px 10px 16px; border-bottom:1px solid var(--border); margin-bottom:14px; }
   .brand span { color:var(--accent); }
   .brand small { display:block; font-size:11px; color:var(--muted); font-weight:500; margin-top:2px; }
@@ -73,10 +95,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   .nav-btn.active { background:linear-gradient(135deg,#0284c7,#2563eb); color:#fff; box-shadow:0 4px 14px rgba(37,99,235,.35); }
   .side-foot { margin-top:auto; padding-top:14px; border-top:1px solid var(--border); font-size:11px; color:#64748b; text-align:center; }
 
-  .main { margin-left:248px; flex:1; padding:24px 28px; max-width:calc(100% - 248px); }
+  .main { margin-left:250px; flex:1; padding:24px 28px; max-width:calc(100% - 250px); }
   .topbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px; }
   .topbar h2 { margin:0; font-size:20px; }
-  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   button, a.btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; text-decoration:none; transition:.15s; display:inline-flex; align-items:center; gap:6px; }
   button:hover:not(:disabled), a.btn:hover { background:#334155; border-color:var(--accent); }
   button:disabled { opacity:.55; cursor:not-allowed; }
@@ -91,11 +113,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   .view.active { display:block; }
   @keyframes fade { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 
-  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:18px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:12px; margin-bottom:18px; }
   .kpi { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
   .kpi .lbl { font-size:10.5px; text-transform:uppercase; color:var(--muted); letter-spacing:.06em; }
-  .kpi .num { font-size:23px; font-weight:800; margin-top:5px; }
-  .green { color:var(--green); } .cyan { color:var(--accent); } .amber { color:var(--amber); } .purple { color:var(--purple); }
+  .kpi .num { font-size:22px; font-weight:800; margin-top:5px; }
+  .green { color:var(--green); } .cyan { color:var(--accent); } .amber { color:var(--amber); } .purple { color:var(--purple); } .red { color:var(--red); }
 
   .toolbar { display:flex; gap:9px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
   input, select, textarea { background:#080d19; color:var(--text); border:1px solid #334155; padding:8px 11px; border-radius:8px; font-size:13px; font-family:inherit; }
@@ -103,23 +125,47 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   textarea { width:100%; min-height:88px; resize:vertical; }
 
   .table-box { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:auto; }
-  table { width:100%; border-collapse:collapse; min-width:1150px; }
+  table { width:100%; border-collapse:collapse; min-width:1180px; }
   th, td { padding:10px 11px; border-bottom:1px solid var(--border); text-align:left; font-size:13px; vertical-align:middle; }
   th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; background:#0b1220; }
   tr:hover { background:#131d31; }
   tr.dirty { background:#1e293b99; }
   .score { display:inline-block; padding:3px 8px; border-radius:6px; font-weight:700; font-size:12px; }
   .s-hi { background:#14532d; color:#86efac; } .s-mid { background:#1e3a8a; color:#93c5fd; }
-  .pill { display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:999px; background:#3b0764; color:#e9d5ff; margin-left:6px; font-weight:700; }
+  .pill { display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:999px; background:#3b0764; color:#e9d5ff; margin-left:5px; font-weight:700; }
+  .badge-tipo { display:inline-block; font-size:10px; padding:2px 6px; border-radius:5px; font-weight:700; text-transform:uppercase; margin-right:4px; }
+  .bt-freelance { background:#0c4a6e; color:#7dd3fc; }
+  .bt-bounty { background:#4c1d95; color:#ddd6fe; }
+  .bt-remoto { background:#064e3b; color:#6ee7b7; }
+  .bt-custom { background:#78350f; color:#fde68a; }
   a.title-link { color:#e2e8f0; text-decoration:none; font-weight:600; }
   a.title-link:hover { color:var(--accent); text-decoration:underline; }
   .meta { font-size:11.5px; color:var(--muted); margin-top:3px; }
   .usd-in { width:68px; }
-  .note-in { width:125px; font-size:12px; padding:6px 8px; }
+  .note-in { width:120px; font-size:12px; padding:6px 8px; }
 
   .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(390px,1fr)); gap:16px; }
+  .grid-plat { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:13px; margin-bottom:20px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; }
   .card h3 { margin:0 0 12px 0; font-size:15px; color:var(--accent); }
+  .plat-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:15px; display:flex; flex-direction:column; gap:8px; transition:.15s; }
+  .plat-card.off { opacity:.52; }
+  .plat-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .plat-name { font-weight:700; font-size:14.5px; }
+  .plat-stat { font-size:11.5px; background:#080d19; border:1px solid #1e293b; border-radius:7px; padding:7px 9px; color:#cbd5e1; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .dot-ok { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .dot-err { background:var(--red); box-shadow:0 0 8px var(--red); }
+  .dot-idle { background:#64748b; }
+
+  .switch { position:relative; display:inline-block; width:42px; height:22px; flex-shrink:0; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; cursor:pointer; inset:0; background:#334155; border-radius:999px; transition:.2s; }
+  .slider:before { position:absolute; content:""; height:16px; width:16px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider { background:#10b981; }
+  .switch input:checked + .slider:before { transform:translateX(20px); }
+
+  .rss-row { display:flex; justify-content:space-between; align-items:center; gap:10px; background:#080d19; border:1px solid #1e293b; border-radius:8px; padding:9px 12px; margin-bottom:8px; font-size:12.5px; }
   .field { margin-bottom:12px; }
   .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; font-weight:600; }
   .field input, .field select { width:100%; }
@@ -146,19 +192,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 </head>
 <body>
   <aside class="side">
-    <div class="brand">⚡ ZeroTouch <span>APEX</span><small>v12.9 Unified Freelance OS</small></div>
+    <div class="brand">⚡ ZeroTouch <span>OMNI-GRID</span><small>v13.0 • 12+ Plataformas</small></div>
     <div class="nav-grp">Operacion</div>
     <button class="nav-btn active" id="nav_crm" onclick="verTab('t_crm','📡 Radar & CRM',this)">📡 Radar & CRM</button>
+    <button class="nav-btn" id="nav_plat" onclick="verTab('t_plat','🌐 Plataformas & RSS',this)">🌐 Plataformas & RSS</button>
     <button class="nav-btn" onclick="verTab('t_stats','📊 Analytics & Pipeline',this)">📊 Analytics & Pipeline</button>
     <div class="nav-grp">Estudio IA</div>
-    <button class="nav-btn" onclick="verTab('t_ai','🧠 Copiloto & Negociador',this)">🧠 Copiloto & Negociador</button>
+    <button class="nav-btn" onclick="verTab('t_ai','🧠 Copiloto Universal & Negociador',this)">🧠 Copiloto & Negociador</button>
     <button class="nav-btn" onclick="verTab('t_code','💻 Refinador de Codigo IA',this)">💻 Refinador de Codigo IA</button>
     <div class="nav-grp">Negocio</div>
     <button class="nav-btn" onclick="verTab('t_mkt','🧲 Marketing & Cierre',this)">🧲 Marketing & Cierre</button>
     <button class="nav-btn" id="nav_whop" onclick="verTab('t_whop','📦 Whop, Facturas & Calc',this)">📦 Whop, Facturas & Calc</button>
     <div class="nav-grp">Sistema</div>
     <button class="nav-btn" onclick="verTab('t_cfg','⚙️ Ajustes & Salud',this)">⚙️ Ajustes & Salud</button>
-    <div class="side-foot">APEX v12.9 • 16 Fuentes • AST</div>
+    <div class="side-foot">OMNI-GRID v13.0 • Batch IA</div>
   </aside>
 
   <main class="main">
@@ -166,7 +213,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <h2 id="pageTitle">📡 Radar & CRM</h2>
       <div class="actions">
         <button id="btnSniper" onclick="toggleSniper()">🎯 Auto-Sniper: OFF</button>
-        <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear Ahora</button>
+        <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear Todo</button>
         <button onclick="cargarDatos(true)" title="Forzar recarga">🔄</button>
         <a class="btn" href="/api/export">📥 Excel</a>
       </div>
@@ -177,14 +224,23 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div class="kpis">
         <div class="kpi"><div class="lbl">Facturado Total</div><div class="num green" id="kUsd">$0.00</div></div>
         <div class="kpi"><div class="lbl">Pipeline Vivo</div><div class="num amber" id="kPipe">$0</div></div>
-        <div class="kpi"><div class="lbl">Ticket Promedio</div><div class="num cyan" id="kAvg">$0</div></div>
         <div class="kpi"><div class="lbl">Leads / Ganados</div><div class="num green" id="kLeads">0 / 0</div></div>
         <div class="kpi"><div class="lbl">Tasa de Cierre</div><div class="num cyan" id="kCierre">0%</div></div>
+        <div class="kpi"><div class="lbl">Fuentes OK</div><div class="num cyan" id="kFuentes">0 / 0</div></div>
         <div class="kpi"><div class="lbl">Tokens Ahorrados</div><div class="num purple" id="kTok">0</div></div>
       </div>
 
       <div class="toolbar">
-        <input type="text" id="qSearch" placeholder="Buscar titulo, subreddit, nota o categoria..." oninput="renderTabla()" style="min-width:240px;">
+        <input type="text" id="qSearch" placeholder="Buscar titulo, plataforma, nota o categoria..." oninput="renderTabla()" style="min-width:230px;">
+        <select id="qTipo" onchange="renderTabla()">
+          <option value="">Todos los tipos</option>
+          <option value="freelance">💼 Freelance</option>
+          <option value="bounty">💎 Bounty</option>
+          <option value="remoto">🌍 Remoto</option>
+        </select>
+        <select id="qPlat" onchange="renderTabla()">
+          <option value="">Todas las plataformas</option>
+        </select>
         <select id="qEstado" onchange="renderTabla()">
           <option value="">Todos los estados</option>
           <option value="nuevo">Nuevo</option>
@@ -194,14 +250,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <option value="descartado">Descartado</option>
         </select>
         <select id="qMinScore" onchange="renderTabla()">
-          <option value="0">Cualquier Score</option>
+          <option value="0">Score: Todos</option>
           <option value="7">Score 7+</option>
           <option value="8">Score 8+ (Top)</option>
         </select>
         <select id="qSort" onchange="renderTabla()">
-          <option value="reciente">Orden: Mas recientes</option>
+          <option value="reciente">Orden: Recientes</option>
           <option value="score">Orden: Mayor Score</option>
-          <option value="dinero">Orden: Mayor Presupuesto ($)</option>
+          <option value="dinero">Orden: Mayor $</option>
         </select>
         <div class="status-bar" id="scanStatus"></div>
       </div>
@@ -209,30 +265,66 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div class="table-box">
         <table>
           <thead>
-            <tr><th>ID</th><th>Score</th><th>Fuente</th><th>Proyecto, Competencia & Cliente</th><th>Presupuesto</th><th>Estado</th><th>USD</th><th>Nota</th><th>Acciones</th></tr>
+            <tr><th>ID</th><th>Score</th><th>Plataforma & Tipo</th><th>Proyecto, Competencia & Cliente</th><th>Presupuesto</th><th>Estado</th><th>USD</th><th>Nota</th><th>Acciones</th></tr>
           </thead>
           <tbody id="tbodyLeads"></tbody>
         </table>
       </div>
     </section>
 
-    <!-- 2. ANALYTICS -->
+    <!-- 2. PLATAFORMAS & RSS -->
+    <section id="t_plat" class="view">
+      <div class="card" style="margin-bottom:16px;">
+        <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;">
+          <div>
+            <h3 style="margin-bottom:4px;">🌐 Panel de Control Multi-Plataforma (12+ Fuentes)</h3>
+            <div class="meta">Prende o apaga cada plataforma al instante. Los cambios se guardan automaticamente en config.json.</div>
+          </div>
+          <div class="actions">
+            <label style="display:inline-flex;align-items:center;gap:8px;font-size:12.5px;background:#080d19;padding:7px 12px;border-radius:8px;border:1px solid #334155;cursor:pointer;">
+              <input type="checkbox" id="chkSoloCorto" onchange="toggleSoloCorto(this.checked)">
+              <span>Solo Freelance Corto & Bounties</span>
+            </label>
+            <button class="primary" onclick="correrDryRunWeb(this, 'platDryOut')">🧪 Test Todas las Fuentes (0 Tokens)</button>
+          </div>
+        </div>
+        <div id="platDryOut" class="prebox" style="display:none;margin-top:14px;"></div>
+      </div>
+
+      <div id="gridPlataformas" class="grid-plat"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>📡 Agregar Feed RSS / Atom Propio</h3>
+          <div class="field"><label>Nombre corto del feed</label><input id="rssNom" placeholder="Ej. PythonOrg Jobs / Upwork RSS / IndieHackers"></div>
+          <div class="field"><label>URL del feed (.rss / .xml / .atom)</label><input id="rssUrl" placeholder="https://ejemplo.com/jobs.rss"></div>
+          <button class="success" onclick="agregarRssWeb()">➕ Agregar Feed al Radar</button>
+          <div id="listaRssCustom" style="margin-top:16px;"></div>
+        </div>
+        <div class="card">
+          <h3>🩺 Detalle en Vivo de Conectores (Ultima Corrida)</h3>
+          <div id="tablaSaludDetalle" class="prebox" style="max-height:320px;">Corre un escaneo o "Test Todas las Fuentes" para ver el pulso de cada conector.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. ANALYTICS -->
     <section id="t_stats" class="view">
       <div class="grid-2">
         <div class="card"><h3>📍 Top Fuentes (Leads Detectados)</h3><div id="chFuentes"></div></div>
         <div class="card"><h3>🎯 Embudo de Conversion CRM</h3><div id="chEmbudo"></div></div>
         <div class="card"><h3>💵 Ingresos por Categoria (USD)</h3><div id="chCat"></div></div>
-        <div class="card"><h3>⚡ Eficiencia de Tokens IA</h3><div id="chTokens"></div></div>
+        <div class="card"><h3>⚡ Eficiencia de Tokens IA (Batch + Pre-filtro)</h3><div id="chTokens"></div></div>
       </div>
     </section>
 
-    <!-- 3. ESTUDIO IA -->
+    <!-- 4. ESTUDIO IA -->
     <section id="t_ai" class="view">
       <div class="grid-2">
         <div class="card">
-          <h3>🤖 Copiloto APEX (Link Reddit PC/Movil, #ID o Texto)</h3>
-          <div class="field"><textarea id="aiOferta" placeholder="Pega un link de Reddit, escribe #4, o pega la descripcion del cliente..."></textarea></div>
-          <button class="primary" onclick="correrCopilotoWeb(this)">Generar Pitch A/B + Red Flags + Codigo</button>
+          <h3>🤖 Copiloto Universal (Cualquier Link, #ID o Texto)</h3>
+          <div class="field"><textarea id="aiOferta" placeholder="Pega cualquier link (Reddit, Freelancer.com, GitHub Issue, HackerNews, RemoteOK, WWR...), escribe #4 o pega la descripcion..."></textarea></div>
+          <button class="primary" onclick="correrCopilotoWeb(this)">Generar Estrategia + Pitch A/B + Codigo</button>
           <div id="aiResCopiloto" style="margin-top:14px;"></div>
         </div>
         <div class="card">
@@ -245,7 +337,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </section>
 
-    <!-- 4. REFINADOR DE CODIGO IA -->
+    <!-- 5. REFINADOR DE CODIGO IA -->
     <section id="t_code" class="view">
       <div class="grid-2">
         <div class="card">
@@ -257,7 +349,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <button onclick="cargarScriptsLista()">🔄</button>
             </div>
           </div>
-          <div class="field"><label>Que cambio o mejora quieres hacerle?</label><textarea id="codeInstr" placeholder="Ej. Cambia requests por playwright headless, guarda tambien las imagenes y exporta a Excel/CSV con barra de progreso..."></textarea></div>
+          <div class="field"><label>Que cambio o mejora quieres hacerle?</label><textarea id="codeInstr" placeholder="Ej. Cambia requests por playwright headless, guarda tambien imagenes y exporta a CSV..."></textarea></div>
           <div class="actions">
             <button class="primary" onclick="refinarCodigoWeb(this)">✨ Refinar & Validar AST</button>
             <button class="sm" onclick="copiarCodigoActual()">📋 Copiar Codigo</button>
@@ -271,7 +363,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </section>
 
-    <!-- 5. MARKETING & CIERRE -->
+    <!-- 6. MARKETING & CIERRE -->
     <section id="t_mkt" class="view">
       <div class="grid-2">
         <div class="card">
@@ -308,7 +400,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </section>
 
-    <!-- 6. WHOP, FACTURAS & CALCULADORA -->
+    <!-- 7. WHOP, FACTURAS & CALCULADORA -->
     <section id="t_whop" class="view">
       <div class="grid-2">
         <div class="card">
@@ -370,7 +462,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </section>
 
-    <!-- 7. AJUSTES & SALUD -->
+    <!-- 8. AJUSTES & SALUD -->
     <section id="t_cfg" class="view">
       <div class="grid-2">
         <div class="card">
@@ -386,10 +478,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <div class="field"><label>TRM COP</label><input id="cTrm" type="number"></div>
             <div class="field"><label>Score Min</label><input id="cScore" type="number"></div>
           </div>
-          <div class="grid-2" style="grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="grid-2" style="grid-template-columns:1fr 1fr 1fr;gap:10px;">
             <div class="field"><label>Sniper (seg)</label><input id="cSniper" type="number"></div>
-            <div class="field"><label>Max Edad Post (hrs)</label><input id="cMaxHrs" type="number"></div>
+            <div class="field"><label>Max Edad (hrs)</label><input id="cMaxHrs" type="number"></div>
+            <div class="field"><label>Lote IA (1-8)</label><input id="cBatch" type="number"></div>
           </div>
+          <div class="field"><label>Max Ofertas IA por ciclo</label><input id="cMaxIa" type="number"></div>
           <div class="field"><label>Blacklist Extra (palabras separadas por coma)</label><input id="cBlack" placeholder="ej. unpaid, internship, wordpress"></div>
           <div class="field"><label>Telegram Admin ID (control remoto DM)</label><input id="cAdmin" placeholder="Opcional"></div>
           <button class="primary" onclick="guardarConfigWeb()">💾 Guardar Configuracion</button>
@@ -397,7 +491,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <div class="card">
           <h3>🩺 Salud del Sistema & Logs en Vivo</h3>
           <div class="actions" style="margin-bottom:14px;">
-            <button class="primary" onclick="correrDiagWeb(this)">🩺 Probar Conexiones</button><button class="sm" onclick="correrDryRunWeb(this)">🧪 Test Escaner (0 Tokens)</button>
+            <button class="primary" onclick="correrDiagWeb(this)">🩺 Probar Conexiones</button>
+            <button class="sm" onclick="correrDryRunWeb(this, 'resDiag')">🧪 Test Escaner (0 Tokens)</button>
             <button class="purple" onclick="probarTelegramWeb(this)">📨 Alerta Prueba TG</button>
             <button class="success" onclick="hacerBackupWeb()">💾 Backup DB</button>
           </div>
@@ -412,7 +507,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   <div class="modal-bg" id="modalBg" onclick="if(event.target===this)cerrarModal()">
     <div class="modal">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto APEX</h3>
+        <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto Universal OMNI</h3>
         <button class="sm" onclick="cerrarModal()">Cerrar (Esc)</button>
       </div>
       <div id="modalBody">Cargando...</div>
@@ -421,7 +516,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   <div id="toast" class="toast"></div>
 
 <script>
-let DATA = { leads:[], kpis:{}, analytics:{}, scan:{}, logs:[] };
+let DATA = { leads:[], kpis:{}, analytics:{}, scan:{}, logs:[], salud:[], catalogo:[], fuentes_activas:{}, feeds_rss_custom:[], solo_freelance_corto:false };
 const CLIP_STORE = {};
 const DIRTY_LEADS = new Set();
 let CLIP_SEQ = 0;
@@ -452,6 +547,7 @@ function verTab(id, title, btn){
   document.getElementById('pageTitle').textContent = title;
   if(btn) btn.classList.add('active');
   if(id === 't_cfg') cargarConfigWeb();
+  if(id === 't_plat') renderPlataformas();
   if(id === 't_whop'){ calcularPrecio(); cargarScriptsLista(); }
   if(id === 't_code'){ cargarScriptsLista(); }
 }
@@ -489,7 +585,7 @@ function marcarDirty(id){
 function pasarAFactura(id){
   const l = (DATA.leads || []).find(x => x.id === id);
   if(!l) return;
-  document.getElementById('invCli').value = l.autor ? ('u/' + l.autor) : 'Client';
+  document.getElementById('invCli').value = l.autor ? l.autor : 'Client';
   document.getElementById('invProj').value = l.titulo.replace(/^\[[^\]]+\]\s*/,'').slice(0, 90);
   document.getElementById('invUsd').value = l.ganancia_usd > 0 ? l.ganancia_usd : (l.presupuesto_num > 0 ? l.presupuesto_num : 100);
   verTab('t_whop', '📦 Whop, Facturas & Calc', document.getElementById('nav_whop'));
@@ -503,15 +599,121 @@ async function toggleSniper(){
   await cargarDatos(false);
 }
 
+async function togglePlataforma(clave, activa){
+  const d = await apiJson('/api/fuentes_toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave, activa}) });
+  if(d.error) return toast('❌ ' + d.error);
+  DATA.fuentes_activas = d.fuentes_activas || DATA.fuentes_activas;
+  renderPlataformas();
+  toast(activa ? `✅ ${clave} activada` : `⏸️ ${clave} pausada`);
+}
+
+async function toggleSoloCorto(activo){
+  const d = await apiJson('/api/fuentes_toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({solo_freelance_corto: activo}) });
+  if(d.error) return toast('❌ ' + d.error);
+  DATA.solo_freelance_corto = activo;
+  toast(activo ? '💼 Filtro activo: solo Freelance corto & Bounties' : '🌍 Modo completo: Freelance + Bounties + Remoto');
+}
+
+async function agregarRssWeb(){
+  const nombre = document.getElementById('rssNom').value.trim();
+  const url = document.getElementById('rssUrl').value.trim();
+  if(!url.startsWith('http')) return toast('⚠️ Ingresa una URL valida que empiece por http/https');
+  const d = await apiJson('/api/rss_add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nombre, url}) });
+  if(d.error) return toast('❌ ' + d.error);
+  document.getElementById('rssNom').value = '';
+  document.getElementById('rssUrl').value = '';
+  DATA.feeds_rss_custom = d.feeds || [];
+  renderPlataformas();
+  toast('📡 Feed RSS agregado al radar');
+}
+
+async function eliminarRssWeb(idx){
+  const d = await apiJson('/api/rss_del', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({idx}) });
+  if(d.error) return toast('❌ ' + d.error);
+  DATA.feeds_rss_custom = d.feeds || [];
+  renderPlataformas();
+  toast('🗑️ Feed RSS eliminado');
+}
+
+function renderPlataformas(){
+  const cat = DATA.catalogo || [];
+  const act = DATA.fuentes_activas || {};
+  const salud = DATA.salud || [];
+  document.getElementById('chkSoloCorto').checked = !!DATA.solo_freelance_corto;
+
+  const porClave = {};
+  salud.forEach(s => {
+    const k = s.clave_config || 'otros';
+    if(!porClave[k]) porClave[k] = { ok:0, tot:0, bruto:0, tech:0, modos:new Set(), err:'' };
+    porClave[k].tot += 1;
+    if(s.ok) porClave[k].ok += 1;
+    porClave[k].bruto += (s.bruto || 0);
+    porClave[k].tech += (s.tech || 0);
+    if(s.modo) porClave[k].modos.add(s.modo);
+    if(s.ultimo_error) porClave[k].err = s.ultimo_error;
+  });
+
+  document.getElementById('gridPlataformas').innerHTML = cat.map(p => {
+    const on = act[p.clave] !== false;
+    const st = porClave[p.clave];
+    let dot = 'dot-idle', statTxt = 'Sin escanear aun en esta sesion';
+    if(st){
+      dot = st.ok > 0 ? 'dot-ok' : 'dot-err';
+      const modosTxt = Array.from(st.modos).slice(0,2).join(', ');
+      statTxt = `${st.ok}/${st.tot} OK • ${st.bruto} raw • ${st.tech} tech${modosTxt ? ' • ' + modosTxt : ''}`;
+      if(st.ok === 0 && st.err) statTxt += ` (${st.err})`;
+    }
+    return `
+      <div class="plat-card ${on ? '' : 'off'}">
+        <div class="plat-top">
+          <div>
+            <div class="plat-name"><span class="dot ${dot}"></span>${esc(p.nombre)}</div>
+            <div class="meta"><span class="badge-tipo bt-${esc(p.tipo)}">${esc(p.tipo)}</span> ${esc(p.desc)}</div>
+          </div>
+          <label class="switch" title="Activar / Pausar">
+            <input type="checkbox" ${on ? 'checked' : ''} onchange="togglePlataforma('${esc(p.clave)}', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="plat-stat">${esc(statTxt)}</div>
+      </div>
+    `;
+  }).join('');
+
+  const feeds = DATA.feeds_rss_custom || [];
+  const boxRss = document.getElementById('listaRssCustom');
+  if(!feeds.length){
+    boxRss.innerHTML = '<div class="meta">No tienes feeds RSS propios agregados todavia.</div>';
+  } else {
+    boxRss.innerHTML = feeds.map((f, idx) => {
+      const nom = typeof f === 'string' ? f : (f.nombre || f.url);
+      const url = typeof f === 'string' ? f : f.url;
+      return `<div class="rss-row"><div><b>${esc(nom)}</b><div class="meta">${esc(url)}</div></div><button class="danger sm" onclick="eliminarRssWeb(${idx})">🗑️</button></div>`;
+    }).join('');
+  }
+
+  const detEl = document.getElementById('tablaSaludDetalle');
+  if(salud.length){
+    detEl.textContent = salud.map(s => `${s.ok ? '✅' : '❌'} ${s.fuente.padEnd(18)} | ${(s.modo||'').padEnd(15)} | raw:${String(s.bruto).padStart(3)} | tech:${String(s.tech).padStart(2)}${s.ultimo_error ? ' | ' + s.ultimo_error : ''}`).join('\n');
+  }
+}
+
+function poblarFiltroPlataformas(){
+  const sel = document.getElementById('qPlat');
+  const actual = sel.value;
+  const unicas = Array.from(new Set((DATA.leads || []).map(l => l.plataforma || l.fuente).filter(Boolean))).sort();
+  sel.innerHTML = '<option value="">Todas las plataformas</option>' + unicas.map(p => `<option value="${esc(p)}" ${p===actual?'selected':''}>${esc(p)}</option>`).join('');
+}
+
 async function cargarDatos(forzarTabla=false){
   const d = await apiJson('/api/data');
   if(d.error) return;
   DATA = d;
   document.getElementById('kUsd').textContent = '$' + Number(DATA.kpis.usd || 0).toFixed(2);
   document.getElementById('kPipe').textContent = '$' + Math.round(DATA.kpis.pipeline_usd || 0);
-  document.getElementById('kAvg').textContent = '$' + Math.round(DATA.kpis.ticket_prom || 0);
   document.getElementById('kLeads').textContent = `${DATA.kpis.leads_total} / ${DATA.kpis.ganados}`;
   document.getElementById('kCierre').textContent = DATA.kpis.tasa_cierre + '%';
+  document.getElementById('kFuentes').textContent = `${DATA.kpis.fuentes_ok || 0} / ${DATA.kpis.fuentes_total || 0}`;
   document.getElementById('kTok').textContent = Number(DATA.kpis.tok_ahorrados || 0).toLocaleString();
 
   const bSnip = document.getElementById('btnSniper');
@@ -524,13 +726,16 @@ async function cargarDatos(forzarTabla=false){
   }
 
   const st = document.getElementById('scanStatus');
-  if(DATA.scan.running){ st.textContent = '⏳ Escaneando 16 fuentes en segundo plano...'; }
+  if(DATA.scan.running){ st.textContent = '⏳ Escaneando 12+ plataformas en paralelo...'; }
   else if(DIRTY_LEADS.size > 0){ st.textContent = `✏️ Tienes ${DIRTY_LEADS.size} fila(s) sin guardar`; }
-  else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; const fTxt = lr.fuentes_total ? `Fuentes ${lr.fuentes_ok}/${lr.fuentes_total} | ` : ``; st.textContent = `✅ ${fTxt}${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
+  else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; const fTxt = lr.fuentes_total ? `Fuentes ${lr.fuentes_ok}/${lr.fuentes_total} | ` : ''; st.textContent = `✅ ${fTxt}${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
 
   if(DATA.logs && DATA.logs.length){
     document.getElementById('liveLogs').textContent = DATA.logs.join('\n');
   }
+
+  poblarFiltroPlataformas();
+  renderPlataformas();
 
   const editandoTabla = document.activeElement && document.activeElement.closest('#tbodyLeads');
   if(forzarTabla){ DIRTY_LEADS.clear(); }
@@ -543,20 +748,36 @@ async function cargarDatos(forzarTabla=false){
 function renderTabla(){
   const q = document.getElementById('qSearch').value.toLowerCase();
   const est = document.getElementById('qEstado').value;
+  const tipo = document.getElementById('qTipo').value;
+  const plat = document.getElementById('qPlat').value;
   const minS = parseInt(document.getElementById('qMinScore').value || '0', 10);
   const sortBy = document.getElementById('qSort').value;
-  let filtrados = (DATA.leads || []).filter(l => l.score >= minS && (!est || l.estado === est) && (!q || (l.titulo+' '+l.fuente+' '+l.categoria+' '+(l.notas||'')).toLowerCase().includes(q)));
+
+  let filtrados = (DATA.leads || []).filter(l => {
+    const lPlat = l.plataforma || l.fuente || '';
+    const lTipo = l.tipo_trabajo || 'freelance';
+    return l.score >= minS
+      && (!est || l.estado === est)
+      && (!tipo || lTipo === tipo)
+      && (!plat || lPlat === plat)
+      && (!q || (l.titulo+' '+l.fuente+' '+lPlat+' '+l.categoria+' '+(l.notas||'')).toLowerCase().includes(q));
+  });
 
   if(sortBy === 'score') filtrados.sort((a,b) => b.score - a.score || b.id - a.id);
   else if(sortBy === 'dinero') filtrados.sort((a,b) => (b.presupuesto_num||0) - (a.presupuesto_num||0) || b.score - a.score);
 
   const tb = document.getElementById('tbodyLeads');
-  if(!filtrados.length){ tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px;">Sin leads para este filtro. Haz clic en "Escanear Ahora".</td></tr>'; return; }
-  tb.innerHTML = filtrados.map(l => `
+  if(!filtrados.length){ tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px;">Sin leads para este filtro. Haz clic en "Escanear Todo".</td></tr>'; return; }
+  tb.innerHTML = filtrados.map(l => {
+    const t = l.tipo_trabajo || 'freelance';
+    return `
     <tr id="row_${l.id}">
       <td><b>#${l.id}</b></td>
       <td><span class="score ${l.score>=8?'s-hi':'s-mid'}">${l.score}/10</span></td>
-      <td><div>${esc(l.fuente)}</div><div class="meta">${esc(l.categoria)}</div></td>
+      <td>
+        <div><b>${esc(l.fuente)}</b></div>
+        <div class="meta"><span class="badge-tipo bt-${esc(t)}">${esc(t)}</span>${esc(l.categoria)}</div>
+      </td>
       <td>
         <a class="title-link" href="${esc(l.link)}" target="_blank">${esc(l.titulo)}</a>
         ${l.prioridad_tag ? `<span class="pill">${esc(l.prioridad_tag)}</span>` : ''}
@@ -578,7 +799,8 @@ function renderTabla(){
         <button class="danger sm" onclick="borrarLead(${l.id})" title="Eliminar">🗑️</button>
       </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderBarras(elId, pares, cls=''){
@@ -632,22 +854,24 @@ async function borrarLead(id){
 }
 
 async function lanzarEscaneo(){
-  document.getElementById('scanStatus').textContent = '⏳ Iniciando escaneo APEX...';
-  toast('🚀 Escaneo de 16 fuentes iniciado');
+  document.getElementById('scanStatus').textContent = '⏳ Iniciando escaneo OMNI-GRID...';
+  toast('🚀 Escaneo de 12+ plataformas iniciado');
   await apiJson('/api/scan', { method:'POST' });
   setTimeout(() => cargarDatos(false), 2000);
 }
 
 function renderBloqueCopiloto(res){
   if(!res || res.error) return `<div style="color:var(--red);">Error: ${esc(res ? res.error : 'Sin respuesta')}</div>`;
-  const idA = regClip(res.pitch_a), idB = regClip(res.pitch_b), idC = regClip(res.micro_contrato), idCode = regClip(res.codigo);
+  const idA = regClip(res.pitch_a), idB = regClip(res.pitch_b), idP = regClip(res.preguntas), idC = regClip(res.micro_contrato), idCode = regClip(res.codigo);
   return `
-    ${res.confianza ? `<div class="meta" style="margin-bottom:4px;color:var(--purple);font-weight:700;">${esc(res.confianza)}</div>` : ''}
+    <div class="meta" style="margin-bottom:4px;color:var(--purple);font-weight:700;">🌐 ${esc(res.plataforma || 'Auto')} • ${esc(res.confianza || '')}</div>
+    ${res.estrategia ? `<div class="meta" style="margin-bottom:6px;color:var(--accent);font-weight:600;">🎯 ${esc(res.estrategia)}</div>` : ''}
     ${res.red_flags ? `<div class="meta" style="margin-bottom:10px;color:var(--amber);font-weight:700;">🚩 ${esc(res.red_flags)}</div>` : ''}
     <div class="field"><label>Diagnostico</label><div class="prebox">${esc(res.diagnostico)}</div></div>
     <div class="field"><label>Precios Sugeridos</label><div class="prebox">${esc(res.precios)}</div></div>
-    <div class="field"><label>Pitch A (Tecnico) <button class="sm" onclick="copyId('${idA}')">Copiar</button> ${res.dm_url ? `<a class="btn sm" href="${esc(res.dm_url)}" target="_blank">⚡ DM Reddit</a>` : ''}</label><div class="prebox">${esc(res.pitch_a)}</div></div>
+    <div class="field"><label>Pitch A (Adaptado a ${esc(res.plataforma || 'Plataforma')}) <button class="sm" onclick="copyId('${idA}')">Copiar</button> ${res.dm_url ? `<a class="btn sm" href="${esc(res.dm_url)}" target="_blank">⚡ DM Reddit</a>` : ''}</label><div class="prebox">${esc(res.pitch_a)}</div></div>
     <div class="field"><label>Pitch B (Consultivo) <button class="sm" onclick="copyId('${idB}')">Copiar</button></label><div class="prebox">${esc(res.pitch_b)}</div></div>
+    ${res.preguntas ? `<div class="field"><label>Preguntas de Cierre <button class="sm" onclick="copyId('${idP}')">Copiar</button></label><div class="prebox">${esc(res.preguntas)}</div></div>` : ''}
     <div class="field"><label>Micro-Contrato <button class="sm" onclick="copyId('${idC}')">Copiar</button></label><div class="prebox">${esc(res.micro_contrato)}</div></div>
     ${res.codigo ? `<div class="field"><label>Codigo Python (${res.ast_valido ? '✅ AST OK' : '⚠️ Revisar'}) <button class="sm" onclick="copyId('${idCode}')">Copiar Codigo</button></label><div class="prebox">${esc(res.codigo)}</div></div>` : ''}
     <div class="meta">Guardado en borrador_cliente.py — puedes mejorarlo en "💻 Refinador de Codigo IA".</div>
@@ -655,8 +879,8 @@ function renderBloqueCopiloto(res){
 }
 
 async function abrirCopilotoLead(id){
-  document.getElementById('modalTitle').textContent = '🤖 Copiloto APEX — Lead #' + id;
-  document.getElementById('modalBody').innerHTML = '⏳ Analizando post y generando Pitch A/B + Red Flags + Codigo...';
+  document.getElementById('modalTitle').textContent = '🤖 Copiloto Universal — Lead #' + id;
+  document.getElementById('modalBody').innerHTML = '⏳ Descargando oferta y aplicando playbook de la plataforma...';
   document.getElementById('modalBg').classList.add('open');
   const d = await apiJson('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada: '#' + id}) });
   document.getElementById('modalBody').innerHTML = renderBloqueCopiloto(d);
@@ -666,7 +890,7 @@ async function correrCopilotoWeb(btn){
   const entrada = document.getElementById('aiOferta').value.trim();
   if(!entrada) return toast('⚠️ Pega un link, #ID o texto primero');
   btn.disabled = true;
-  document.getElementById('aiResCopiloto').innerHTML = '⏳ Generando estrategia, Red Flags, pitches y codigo...';
+  document.getElementById('aiResCopiloto').innerHTML = '⏳ Extrayendo oferta y generando Estrategia + Pitch A/B + Codigo...';
   const d = await apiJson('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada}) });
   document.getElementById('aiResCopiloto').innerHTML = renderBloqueCopiloto(d);
   btn.disabled = false;
@@ -853,8 +1077,10 @@ async function cargarConfigWeb(){
   document.getElementById('cTarifa').value = c.tarifa_hora_usd || 25;
   document.getElementById('cTrm').value = c.trm_cop || 4200;
   document.getElementById('cScore').value = c.score_minimo || 6;
-  document.getElementById('cSniper').value = c.intervalo_sniper_seg || 70;
-  document.getElementById('cMaxHrs').value = c.max_horas_post || 12;
+  document.getElementById('cSniper').value = c.intervalo_sniper_seg || 75;
+  document.getElementById('cMaxHrs').value = c.max_horas_post || 18;
+  document.getElementById('cBatch').value = c.batch_ia_tamano || 5;
+  document.getElementById('cMaxIa').value = c.max_ia_por_ciclo || 20;
   const bl = Array.isArray(c.palabras_extra_blacklist) ? c.palabras_extra_blacklist.join(', ') : (c.palabras_extra_blacklist || '');
   document.getElementById('cBlack').value = bl;
   document.getElementById('cAdmin').value = c.telegram_admin_id || '';
@@ -876,8 +1102,10 @@ async function guardarConfigWeb(){
     tarifa_hora_usd: parseInt(document.getElementById('cTarifa').value || '25', 10),
     trm_cop: parseInt(document.getElementById('cTrm').value || '4200', 10),
     score_minimo: Math.max(1, Math.min(10, parseInt(document.getElementById('cScore').value || '6', 10))),
-    intervalo_sniper_seg: Math.max(45, parseInt(document.getElementById('cSniper').value || '70', 10)),
-    max_horas_post: Math.max(1, parseInt(document.getElementById('cMaxHrs').value || '12', 10)),
+    intervalo_sniper_seg: Math.max(45, parseInt(document.getElementById('cSniper').value || '75', 10)),
+    max_horas_post: Math.max(1, parseInt(document.getElementById('cMaxHrs').value || '18', 10)),
+    batch_ia_tamano: Math.max(1, Math.min(8, parseInt(document.getElementById('cBatch').value || '5', 10))),
+    max_ia_por_ciclo: Math.max(1, Math.min(50, parseInt(document.getElementById('cMaxIa').value || '20', 10))),
     palabras_extra_blacklist: listaBl,
     telegram_admin_id: document.getElementById('cAdmin').value.trim()
   };
@@ -889,16 +1117,19 @@ async function guardarConfigWeb(){
   toast('💾 Configuracion guardada');
 }
 
-async function correrDryRunWeb(btn){
+async function correrDryRunWeb(btn, outId='resDiag'){
   btn.disabled = true;
-  document.getElementById('resDiag').textContent = '⏳ Ejecutando Dry-Run real de todas las fuentes (0 tokens IA)...';
+  const el = document.getElementById(outId);
+  el.style.display = 'block';
+  el.textContent = '⏳ Probando todas las plataformas activas en paralelo (0 tokens IA)...';
   const d = await apiJson('/api/scan_dry', { method:'POST' });
   btn.disabled = false;
-  if(d.error){ document.getElementById('resDiag').textContent = 'Error: ' + d.error; return; }
-  const fLines = (d.detalle_fuentes || []).map(f => `  ${f.ok ? '✅' : '❌'} ${f.fuente.padEnd(16)} [${f.modo}] -> ${f.bruto} raw | ${f.tech} tech`).join('\n');
-  const cLines = (d.candidatas_preview || []).slice(0, 8).map(c => `  • [${c.fuente} | Tech:${c.tech_score} | $${c.dinero}] ${c.titulo}`).join('\n') || '  (Todas las ofertas tech actuales ya estan en tu cache de vistos)';
-  document.getElementById('resDiag').textContent = `=== DRY-RUN OVERDRIVE (${d.segundos}s | 0 Tokens) ===\nFuentes OK: ${d.fuentes_ok}/${d.fuentes_total} | Bruto: ${d.bruto} | Bloqueados: ${d.descartados} | Ya vistos: ${d.ya_vistos}\n\nFUENTES:\n${fLines}\n\nCANDIDATAS NUEVAS QUE PASARIAN A GEMINI (${(d.candidatas_preview||[]).length}):\n${cLines}`;
-  toast('🧪 Dry-Run terminado (0 tokens gastados)');
+  if(d.error){ el.textContent = 'Error: ' + d.error; return; }
+  const fLines = (d.detalle_fuentes || []).map(f => `  ${f.ok ? '✅' : '❌'} ${f.fuente.padEnd(18)} [${f.modo}] -> ${f.bruto} raw | ${f.tech} tech`).join('\n');
+  const cLines = (d.candidatas_preview || []).slice(0, 10).map(c => `  • [${c.plataforma} | ${c.tipo} | ${c.presupuesto || '$?'}] ${c.titulo}`).join('\n') || '  (Todas las ofertas tech vigentes ya estan en tu cache de vistos)';
+  el.textContent = `=== DRY-RUN OMNI-GRID (${d.segundos}s | 0 Tokens) ===\nFuentes OK: ${d.fuentes_ok}/${d.fuentes_total} | Bruto: ${d.bruto} | Bloqueados: ${d.descartados} | Ya vistos: ${d.ya_vistos}\n\nPLATAFORMAS:\n${fLines}\n\nTOP CANDIDATAS NUEVAS REPARTIDAS PARA GEMINI (${(d.candidatas_preview||[]).length}):\n${cLines}`;
+  toast('🧪 Dry-Run terminado (0 tokens)');
+  await cargarDatos(false);
 }
 
 async function correrDiagWeb(btn){
@@ -924,7 +1155,8 @@ async function hacerBackupWeb(){
 
 cargarConfigWeb();
 cargarDatos(true);
-setInterval(() => cargarDatos(false), 15000); setInterval(() => { if(DATA.scan && DATA.scan.running) cargarDatos(false); }, 3500);
+setInterval(() => cargarDatos(false), 15000);
+setInterval(() => { if(DATA.scan && DATA.scan.running) cargarDatos(false); }, 3500);
 </script>
 </body>
 </html>
@@ -946,7 +1178,7 @@ def loop_sniper_web(stop_evt: threading.Event) -> None:
     while not stop_evt.is_set():
         SCAN_STATE["sniper_ciclos"] += 1
         correr_scan_bg()
-        intervalo = max(45, safe_int(cargar_config().get("intervalo_sniper_seg", 70), 70))
+        intervalo = max(45, safe_int(cargar_config().get("intervalo_sniper_seg", 75), 75))
         if stop_evt.wait(intervalo):
             break
 
@@ -1004,48 +1236,58 @@ class Handler(BaseHTTPRequestHandler):
                         lineas.append(f"4. Telegram API      : Error ({e})")
                 else:
                     lineas.append("4. Telegram API      : FALTA TELEGRAM_TOKEN")
-                from modulo_a_radar_whop.motor_zerotouch_v4 import diagnosticar_reddit_real
                 lineas.append(f"5. Reddit API        : {diagnosticar_reddit_real()}")
                 resp = generar_texto_ia("Responde solo OK", temperatura=0.0, timeout=10) if key else None
                 lineas.append(f"6. Gemini API        : {'OK' if resp else 'SIN RESPUESTA'}")
                 self._send_json({"reporte": "\n".join(lineas)})
             elif ruta == "/api/data":
+                cfg = cargar_config()
                 conn = preparar_db()
                 try:
                     rows = conn.execute(
-                        "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, presupuesto_num, score, competencia, confianza, prioridad_tag, link, estado, ganancia_usd, notas FROM leads ORDER BY id DESC LIMIT 150"
+                        "SELECT id, fecha, fuente, plataforma, tipo_trabajo, autor, titulo, categoria, presupuesto, presupuesto_num, score, competencia, confianza, prioridad_tag, link, estado, ganancia_usd, notas FROM leads ORDER BY id DESC LIMIT 180"
                     ).fetchall()
                     leads = []
                     for r in rows:
-                        autor = r[3] or ""
+                        autor = r[5] or ""
+                        plat = r[3] or r[2] or ""
                         dm_url = ""
-                        if autor and autor.lower() not in ("[deleted]", "automoderator", "none", "github", "hackernews"):
-                            dm_url = f"https://www.reddit.com/message/compose/?to={quote(autor)}&subject={quote('Re: ' + (r[4] or '')[:60])}"
+                        if plat.lower() == "reddit" and autor and autor.lower() not in ("[deleted]", "automoderator", "none", "github", "hackernews", "freelancer_client"):
+                            dm_url = f"https://www.reddit.com/message/compose/?to={quote(autor)}&subject={quote('Re: ' + (r[6] or '')[:60])}"
                         leads.append({
-                            "id": r[0], "fecha": r[1], "fuente": r[2], "autor": autor, "titulo": r[4],
-                            "categoria": r[5], "presupuesto": r[6], "presupuesto_num": r[7] or 0, "score": r[8],
-                            "competencia": r[9], "confianza": r[10], "prioridad_tag": r[11], "link": r[12],
-                            "estado": r[13], "ganancia_usd": r[14], "notas": r[15] or "", "dm_url": dm_url,
+                            "id": r[0], "fecha": r[1], "fuente": r[2], "plataforma": plat,
+                            "tipo_trabajo": r[4] or "freelance", "autor": autor, "titulo": r[6],
+                            "categoria": r[7], "presupuesto": r[8], "presupuesto_num": r[9] or 0, "score": r[10],
+                            "competencia": r[11], "confianza": r[12], "prioridad_tag": r[13], "link": r[14],
+                            "estado": r[15], "ganancia_usd": r[16], "notas": r[17] or "", "dm_url": dm_url,
                         })
                     leads_total = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
                     usd = conn.execute("SELECT COALESCE(SUM(ganancia_usd), 0) FROM leads WHERE estado = 'ganado'").fetchone()[0]
                     ganados = conn.execute("SELECT COUNT(*) FROM leads WHERE estado = 'ganado'").fetchone()[0]
                     pipeline_usd = conn.execute("SELECT COALESCE(SUM(presupuesto_num), 0) FROM leads WHERE estado IN ('contactado','negociando')").fetchone()[0]
-                    ticket_prom = (usd / ganados) if ganados > 0 else 0
                     activos_neg = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('contactado','negociando','ganado')").fetchone()[0]
                     tasa = round((ganados / activos_neg) * 100) if activos_neg > 0 else 0
                     st_row = conn.execute("SELECT COALESCE(SUM(descartados_local), 0), COALESCE(SUM(tokens_est_usados), 0), COALESCE(SUM(tokens_est_ahorrados), 0) FROM stats_diarias").fetchone()
-                    por_fuente = conn.execute("SELECT fuente, COUNT(*) FROM leads GROUP BY fuente ORDER BY COUNT(*) DESC LIMIT 7").fetchall()
+                    por_fuente = conn.execute("SELECT COALESCE(NULLIF(plataforma, ''), fuente), COUNT(*) FROM leads GROUP BY COALESCE(NULLIF(plataforma, ''), fuente) ORDER BY COUNT(*) DESC LIMIT 8").fetchall()
                     embudo = conn.execute("SELECT estado, COUNT(*) FROM leads GROUP BY estado ORDER BY COUNT(*) DESC").fetchall()
                     usd_cat = conn.execute("SELECT categoria, ROUND(SUM(ganancia_usd), 2) FROM leads WHERE estado = 'ganado' GROUP BY categoria ORDER BY SUM(ganancia_usd) DESC LIMIT 6").fetchall()
+                    salud = obtener_salud_fuentes(conn)
+                    f_ok = sum(1 for s in salud if s["ok"])
+
                     self._send_json({
                         "leads": leads,
                         "kpis": {
-                            "usd": usd, "pipeline_usd": pipeline_usd, "ticket_prom": ticket_prom,
+                            "usd": usd, "pipeline_usd": pipeline_usd,
                             "leads_total": leads_total, "ganados": ganados, "tasa_cierre": tasa,
                             "descartados": st_row[0], "tok_usados": st_row[1], "tok_ahorrados": st_row[2],
+                            "fuentes_ok": f_ok, "fuentes_total": len(salud),
                         },
                         "analytics": {"por_fuente": por_fuente, "embudo": embudo, "usd_categoria": usd_cat},
+                        "salud": salud,
+                        "catalogo": CATALOGO_PLATAFORMAS,
+                        "fuentes_activas": cfg.get("fuentes_activas") or dict(DEFAULT_FUENTES_ACTIVAS),
+                        "feeds_rss_custom": cfg.get("feeds_rss_custom") or [],
+                        "solo_freelance_corto": bool(cfg.get("solo_freelance_corto", False)),
                         "scan": SCAN_STATE,
                         "logs": obtener_logs(50),
                     })
@@ -1055,16 +1297,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn = preparar_db()
                 try:
                     rows = conn.execute(
-                        "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, presupuesto_num, score, competencia, confianza, prioridad_tag, estado, ganancia_usd, notas, link FROM leads ORDER BY id DESC"
+                        "SELECT id, fecha, fuente, plataforma, tipo_trabajo, autor, titulo, categoria, presupuesto, presupuesto_num, score, competencia, confianza, prioridad_tag, estado, ganancia_usd, notas, link FROM leads ORDER BY id DESC"
                     ).fetchall()
                     buf = io.StringIO()
                     w = csv.writer(buf)
-                    w.writerow(["ID", "Fecha", "Fuente", "Autor", "Titulo", "Categoria", "Presupuesto", "Presupuesto_USD", "Score", "Competencia", "Confianza", "Tag", "Estado", "Ganancia_USD", "Notas", "Link"])
+                    w.writerow(["ID", "Fecha", "Fuente", "Plataforma", "Tipo_Trabajo", "Autor", "Titulo", "Categoria", "Presupuesto", "Presupuesto_USD", "Score", "Competencia", "Confianza", "Tag", "Estado", "Ganancia_USD", "Notas", "Link"])
                     w.writerows(rows)
                     data = ("\ufeff" + buf.getvalue()).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/csv; charset=utf-8")
-                    self.send_header("Content-Disposition", f'attachment; filename="crm_apex_{datetime.now().strftime("%Y%m%d")}.csv"')
+                    self.send_header("Content-Disposition", f'attachment; filename="crm_omni_{datetime.now().strftime("%Y%m%d")}.csv"')
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
@@ -1116,6 +1358,47 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     conn.close()
                 self._send_json({"ok": True})
+            elif ruta == "/api/fuentes_toggle":
+                cfg = cargar_config()
+                if "solo_freelance_corto" in data:
+                    cfg["solo_freelance_corto"] = safe_bool(data.get("solo_freelance_corto"))
+                if "clave" in data:
+                    clave = str(data.get("clave", "")).strip()
+                    if clave in DEFAULT_FUENTES_ACTIVAS:
+                        fa = dict(cfg.get("fuentes_activas") or DEFAULT_FUENTES_ACTIVAS)
+                        fa[clave] = safe_bool(data.get("activa"))
+                        cfg["fuentes_activas"] = fa
+                        log_evento(f"Plataforma '{clave}' -> {'ON' if fa[clave] else 'OFF'}")
+                guardar_config(cfg)
+                self._send_json({"ok": True, "fuentes_activas": cfg["fuentes_activas"], "solo_freelance_corto": cfg["solo_freelance_corto"]})
+            elif ruta == "/api/rss_add":
+                url = str(data.get("url", "")).strip()
+                if not (url.startswith("http://") or url.startswith("https://")):
+                    self._send_json({"error": "La URL debe empezar con http:// o https://"})
+                    return
+                nom = str(data.get("nombre", "")).strip() or urlparse(url).netloc.replace("www.", "") or "RSS-Custom"
+                cfg = cargar_config()
+                feeds = list(cfg.get("feeds_rss_custom") or [])
+                existentes = {f if isinstance(f, str) else f.get("url") for f in feeds}
+                if url not in existentes:
+                    feeds.append({"nombre": nom[:40], "url": url})
+                    cfg["feeds_rss_custom"] = feeds
+                    guardar_config(cfg)
+                    log_evento(f"RSS custom agregado: {nom}")
+                self._send_json({"ok": True, "feeds": feeds})
+            elif ruta == "/api/rss_del":
+                idx = safe_int(data.get("idx", -1), -1)
+                cfg = cargar_config()
+                feeds = list(cfg.get("feeds_rss_custom") or [])
+                if 0 <= idx < len(feeds):
+                    eliminado = feeds.pop(idx)
+                    cfg["feeds_rss_custom"] = feeds
+                    guardar_config(cfg)
+                    log_evento(f"RSS custom eliminado: {eliminado}")
+                self._send_json({"ok": True, "feeds": feeds})
+            elif ruta == "/api/scan_dry":
+                res = ejecutar_ciclo(modo_sonido=False, dry_run=True)
+                self._send_json(res)
             elif ruta == "/api/scan":
                 threading.Thread(target=correr_scan_bg, daemon=True).start()
                 self._send_json({"started": True})
@@ -1137,15 +1420,19 @@ class Handler(BaseHTTPRequestHandler):
             elif ruta == "/api/test_tg":
                 cfg_t = cargar_config()
                 prueba = {
-                    "fuente": "r/forhire",
-                    "autor": "spez",
-                    "titulo": "[Hiring] Test Alert APEX v12.9 ($250 USD)",
+                    "id": "test_web_v13",
+                    "fuente": "Freelancer.com",
+                    "plataforma": "Freelancer",
+                    "tipo_trabajo": "freelance",
+                    "autor": "test_client",
+                    "titulo": "Build Python Playwright scraper for Shopify stores ($250 USD)",
                     "texto": "Need a Python script to scrape product prices into CSV.",
-                    "link": "https://www.reddit.com/r/forhire/",
-                    "comp_txt": "🎯 SANGRE FRESCA (1m | 0 com.)",
-                    "prioridad_tag": "🐋 TEST",
+                    "link": "https://www.freelancer.com/",
+                    "comp_txt": "🎯 SANGRE FRESCA (1m | 1 bid)",
+                    "prioridad_tag": "🐋 TEST v13",
                     "dinero_local": 250.0,
-                    "origen": "reddit",
+                    "presupuesto_txt": "$250 USD",
+                    "origen": "freelancer",
                 }
                 _, env, _ = evaluar_y_enviar(prueba, cfg_t, modo_sonido=True)
                 self._send_json({"ok": env})
@@ -1160,17 +1447,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True})
             elif ruta == "/api/copiloto":
                 entrada = str(data.get("entrada", "")).strip()
-                autor = titulo = ""
+                autor = titulo = plat = tipo = ""
                 if entrada.startswith("#") and entrada[1:].isdigit():
-                    oferta, autor, titulo = cargar_desde_crm(int(entrada[1:]))
-                elif entrada.startswith("http") and ("reddit.com" in entrada or "redd.it" in entrada):
-                    oferta, autor, titulo = descargar_post_reddit(entrada)
+                    oferta, autor, titulo, plat, tipo = cargar_desde_crm_completo(int(entrada[1:]))
+                elif entrada.startswith("http"):
+                    oferta, autor, titulo, plat = descargar_oferta_universal(entrada)
                 else:
                     oferta = entrada
                 if not oferta:
-                    self._send_json({"error": "No se pudo leer el post o ID"})
+                    self._send_json({"error": "No se pudo leer el enlace o ID"})
                     return
-                res = analizar_oferta_completo(oferta, autor=autor, titulo=titulo, guardar_archivos=True)
+                res = analizar_oferta_completo(oferta, autor=autor, titulo=titulo, guardar_archivos=True, plataforma=plat, tipo_trabajo=tipo)
                 self._send_json(res or {"error": "IA no respondio en este intento"})
             elif ruta == "/api/refinar":
                 res = refinar_borrador_ia(str(data.get("instruccion", "")), str(data.get("ruta", "")))
@@ -1216,7 +1503,7 @@ class Handler(BaseHTTPRequestHandler):
                     "Crea un archivo PORTAFOLIO.md profesional y directo en ingles para GitHub y clientes freelance.\n"
                     f"Marca: {cfg.get('nombre_marca')}\nEspecialidad: {cfg.get('especialidad')}\n"
                     f"Proyectos ganados: {ganados}\nPagos: {cfg.get('metodos_pago')}\n"
-                    "Incluye resumen, stack tecnico, 3 casos de estudio (ZeroTouch 24/7 Lead Radar, Python Scrapers, Telegram Bots) y CTA.\n"
+                    "Incluye resumen, stack tecnico, 3 casos de estudio (ZeroTouch OMNI-GRID Lead Radar, Python Scrapers, Telegram Bots) y CTA.\n"
                     "Devuelve UNICAMENTE el contenido dentro de <PORTAFOLIO>...</PORTAFOLIO>."
                 )
                 txt = generar_texto_ia(prompt, temperatura=0.35)
@@ -1257,8 +1544,8 @@ def main() -> None:
         webbrowser.open(url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
-    log_evento("Servidor Web APEX v12.9 iniciado en " + url)
-    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH APEX v12.9 WEB OS: {url} ==={C.RESET}")
+    log_evento("Servidor Web OMNI-GRID v13.0 iniciado en " + url)
+    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH OMNI-GRID v13.0 WEB OS: {url} ==={C.RESET}")
     print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
     webbrowser.open(url)
     try:
