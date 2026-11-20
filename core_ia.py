@@ -68,7 +68,11 @@ DEFAULT_CONFIG = {
     "solo_freelance_corto": False,
     "recordatorio_followup_horas": 20,
     "telegram_admin_id": "",
+    "aegis_perfil": "equilibrado",
+    "presupuesto_minimo_usd": 20,
+    "idiomas_permitidos": ["en", "es", "mixto"],
     "palabras_extra_blacklist": [],
+    "palabras_extra_whitelist": [],
     "fuentes_activas": dict(DEFAULT_FUENTES_ACTIVAS),
     "feeds_rss_custom": [],
 }

@@ -2,8 +2,10 @@ import re
 import html
 from bs4 import BeautifulSoup
 from core_ia import extraer_presupuesto_usd
+from modulo_a_radar_whop.motor_filtrado.normalizador import normalizar_oferta
+from modulo_a_radar_whop.motor_filtrado.taxonomia import evaluar_taxonomia
 
-SUBS_DEV_BONUS = {"pythonjobs", "programmingtasks", "requestabot", "webscraping", "discord_bots"}
+SUBS_DEV_BONUS = {"pythonjobs", "programmingtasks", "requestabot", "webscraping", "discord_bots", "n8n", "hireaprogrammer"}
 
 REGEX_DESCARTAR = re.compile(
     r"((\[|\()\s*(for\s*hire|forhire|offer|selling)\s*(\]|\))|^\s*(for\s*hire|offer)\b|\bavailable\s+for\s+hire\b)",
@@ -29,31 +31,6 @@ REGEX_SPAM = re.compile(
     re.IGNORECASE,
 )
 REGEX_HN_DESCARTE = re.compile(r"\b(seeking\s+work|available\s+for\s+hire|for\s+hire|looking\s+for\s+work)\b", re.IGNORECASE)
-
-REGEX_TECH_FUERTE = re.compile(
-    r"\b(python|scrap\w*|selenium|playwright|beautifulsoup|bs4|puppeteer|telegram|discord|"
-    r"webhook|apis?|rest\s*api|graphql|json|csv|sql|sqlite|postgres\w*|mysql|mongodb|pandas|"
-    r"openpyxl|fastapi|flask|django|nodejs|node\.js|typescript|javascript|react|nextjs|next\.js|"
-    r"php|laravel|n8n|zapier|make\.com|airtable|apps\s*script|chrome\s*extension|browser\s*extension|"
-    r"crawler|crawling|automat\w*|script\w*|bots?|docker|linux|vps|deploy|shopify\s*api|"
-    r"woocommerce|regex|ocr|llm|openai|gemini\s*api|langchain|github\s*actions?|etl|pipeline)\b",
-    re.IGNORECASE,
-)
-REGEX_TECH_MEDIO = re.compile(
-    r"\b(program\w*|develop\w*|dev|backend|frontend|fullstack|full-stack|database|software|"
-    r"coding|code|bug|debug|excel|vba|macro|shopify|wordpress|plugin|saas|mvp|dashboard|"
-    r"github|extract\w*|parse|parsing|integrat\w*|remote\s*contract|freelance)\b",
-    re.IGNORECASE,
-)
-REGEX_NO_TECH_PENALIDAD = re.compile(
-    r"\b(video\s*edit\w*|thumbnail\w*|photoshop|illustrator|after\s*effects|premiere|capcut|"
-    r"logo\s*design|graphic\s*design|voice\s*over|voiceover|ugc\s*creator|tiktok\s*video|"
-    r"instagram\s*reel|copywrit\w*|blog\s*post|ghostwrit\w*|essay|homework|assignment|"
-    r"exam\s*help|tutor\w*|virtual\s*assistant|cold\s*call\w*|appointment\s*setter|"
-    r"data\s*entry|transcrib\w*|translat\w*|resume\s*writ\w*|cover\s*letter|social\s*media\s*manager|"
-    r"seo\s*backlinks?|guest\s*post|account\s*executive|sales\s*rep|customer\s*support)\b",
-    re.IGNORECASE,
-)
 REGEX_URGENTE = re.compile(r"\b(urgent|asap|today|right\s*now|quick\s*job|within\s*\d+\s*hours?|immediately)\b", re.IGNORECASE)
 REGEX_BALLENA = re.compile(r"\b(ongoing|retainer|long[\s-]*term|monthly|saas|agency|full\s*mvp)\b", re.IGNORECASE)
 
@@ -81,14 +58,10 @@ def pasa_blacklist_custom(texto: str, extras) -> bool:
     return not any(str(w).strip().lower() in low for w in extras if str(w).strip())
 
 def puntuar_relevancia_local(titulo: str, texto: str, sub_o_tags: str = "") -> tuple[int, bool]:
-    combinado = f"{titulo} {texto} {sub_o_tags}"
-    fuertes = {m.lower() for m in REGEX_TECH_FUERTE.findall(combinado)}
-    medios = {m.lower() for m in REGEX_TECH_MEDIO.findall(combinado)}
-    penalidades = {m.lower() for m in REGEX_NO_TECH_PENALIDAD.findall(combinado)}
-    puntaje = (len(fuertes) * 3) + len(medios) - (len(penalidades) * 3)
-    if sub_o_tags.lower().strip() in SUBS_DEV_BONUS and not penalidades:
-        puntaje += 2
-    return puntaje, (puntaje >= 2)
+    """Puente directo hacia AEGIS-X (NormalizadorForense + MotorTaxonomia 180+ skills + Negaciones)."""
+    doc = normalizar_oferta(titulo=titulo or "", cuerpo=texto or "", tags=sub_o_tags or "")
+    tx = evaluar_taxonomia(doc, sub_o_categoria=sub_o_tags or "")
+    return int(round(tx.score_neto)), bool(tx.es_tech)
 
 def detectar_prioridad_tag(combinado: str, dinero_local: float) -> str:
     tags = []

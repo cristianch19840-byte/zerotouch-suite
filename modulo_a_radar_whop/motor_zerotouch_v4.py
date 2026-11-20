@@ -43,6 +43,7 @@ from modulo_a_radar_whop.conectores.hackernews import escanear_hackernews
 from modulo_a_radar_whop.conectores.bolsas_remotas import escanear_bolsas_remotas
 from modulo_a_radar_whop.conectores.rss_universal import escanear_weworkremotely, escanear_rss_custom
 from modulo_a_radar_whop.conectores.base import crear_meta_fuente
+from modulo_a_radar_whop.motor_filtrado.pipeline import obtener_pipeline_aegis
 
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -527,15 +528,15 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
         ofertas, telemetria = recolectar_todo(cfg)
         registrar_salud_fuentes(conn, telemetria["detalle_fuentes"])
 
+        pendientes_aegis = []
         for item in ofertas:
             pid = item["id"]
             tn = item["titulo_norm"]
             if pid in vistos_ids or (tn and tn in vistos_norms):
                 ya_vistos_n += 1
                 continue
-
             palabras = item.get("titulo_palabras", "")
-            if palabras and any(similitud_jaccard(palabras, prev) >= 0.76 for prev in recientes):
+            if palabras and any(similitud_jaccard(palabras, prev) >= 0.78 for prev in recientes):
                 if not dry_run:
                     conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (pid, tn, palabras))
                     conn.commit()
@@ -545,19 +546,18 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
                 duplicados_sem += 1
                 tok_ahorrados += 420
                 continue
+            pendientes_aegis.append(item)
 
-            if not item["es_tech"]:
-                if not dry_run:
-                    conn.execute("INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)", (pid, tn, palabras))
-                    conn.commit()
-                vistos_ids.add(pid)
-                if tn:
-                    vistos_norms.add(tn)
-                descartados_no_tech += 1
-                tok_ahorrados += 420
-                continue
-
-            candidatas_nuevas.append(item)
+        aegis = obtener_pipeline_aegis()
+        candidatas_nuevas, resumen_aegis = aegis.evaluar_lote_ofertas(
+            pendientes_aegis,
+            cfg,
+            registrar_dedup_rechazadas=(not dry_run),
+            registrar_auditoria=(not dry_run),
+        )
+        descartados_no_tech += resumen_aegis["rechazadas"]
+        tok_ahorrados += resumen_aegis["rechazadas"] * 420
+        telemetria["aegis_resumen"] = resumen_aegis
 
         # Reparto equitativo entre plataformas antes de mandar a Gemini
         seleccionadas = mezclar_equitativamente(candidatas_nuevas, max_ia)
@@ -571,6 +571,9 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
                 "dinero": it.get("dinero_local", 0),
                 "presupuesto": it.get("presupuesto_txt", ""),
                 "comp": it.get("comp_txt", ""),
+                "aegis_score": it.get("aegis_score", 0),
+                "aegis_horas": it.get("aegis_horas", ""),
+                "aegis_tarifa_eff": it.get("aegis_tarifa_eff", 0),
             }
             for it in seleccionadas
         ]
@@ -588,6 +591,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
                             "INSERT OR IGNORE INTO vistos (post_id, titulo_norm, titulo_palabras) VALUES (?, ?, ?)",
                             (it["id"], it["titulo_norm"], it.get("titulo_palabras", "")),
                         )
+                        aegis.registrar_vista_aprobada(it, cfg)
                         vistos_ids.add(it["id"])
                         if it["titulo_norm"]:
                             vistos_norms.add(it["titulo_norm"])
@@ -627,10 +631,17 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
         log_evento(resumen_txt)
         print(f"{C.GREEN}{resumen_txt}{C.RESET}", flush=True)
 
+        if dry_run:
+            ag = telemetria.get("aegis_resumen") or {}
+            if ag:
+                desg = ", ".join(f"{k}:{v}" for k, v in sorted((ag.get("desglose") or {}).items()))
+                print(f"{C.MAGENTA}[AEGIS-X | perfil={ag.get('perfil')}] {ag.get('evaluadas',0)} eval en {ag.get('tiempo_ms',0)}ms -> {ag.get('aprobadas',0)} aprobadas | {ag.get('rechazadas',0)} bloqueadas ({desg}){C.RESET}")
+        if not dry_run:
+            aegis.flush_todo()
         if dry_run and candidatas_preview:
-            print(f"\n{C.BOLD}Top candidatas nuevas repartidas equitativamente para Gemini:{C.RESET}")
+            print(f"\n{C.BOLD}Top candidatas certificadas por AEGIS-X para Gemini:{C.RESET}")
             for c in candidatas_preview[:10]:
-                print(f"  - [{c['plataforma']:<13} | {c['tipo']:<9} | {c['presupuesto'] or '$?'}] {c['titulo']} ({c['comp']})")
+                print(f"  - [AEGIS {c.get('aegis_score',0):4.1f} | {c['plataforma']:<12} | {c['presupuesto'] or '$?'} | {c.get('aegis_horas','')}] {c['titulo']}")
             print()
 
         return {
@@ -647,6 +658,7 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
             "segundos": dur,
             "detalle_fuentes": telemetria["detalle_fuentes"],
             "candidatas_preview": candidatas_preview[:15],
+            "aegis_resumen": telemetria.get("aegis_resumen") or {},
         }
     finally:
         conn.close()
