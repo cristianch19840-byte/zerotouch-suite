@@ -17,6 +17,10 @@ if ROOT_DIR not in sys.path:
 from core_ia import (
     C,
     SESSION,
+    safe_int,
+    safe_bool,
+    extraer_score,
+    log_evento,
     cargar_config,
     preparar_db,
     registrar_metricas,
@@ -30,12 +34,12 @@ TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 REDDIT_HEADERS = {
-    "User-Agent": "python:zerotouch-prime:v10.0 (by /u/zerotouch_freelance)",
+    "User-Agent": "python:zerotouch-titan:v11.5 (by /u/zerotouch_freelance)",
     "Accept": "application/json,application/atom+xml,text/xml;q=0.9,*/*;q=0.8",
 }
 
 GITHUB_HEADERS = {
-    "User-Agent": "ZeroTouchPrime/10.0",
+    "User-Agent": "ZeroTouchTitan/11.5",
     "Accept": "application/vnd.github+json",
 }
 if os.getenv("GITHUB_TOKEN"):
@@ -72,7 +76,7 @@ REGEX_TECH = re.compile(
     r"plugin|extension|webhook|ai|llm|gpt|gemini|bug|fix|linux|server|deploy|n8n|zapier|make\.com|airtable)\b",
     re.IGNORECASE,
 )
-REGEX_DINERO = re.compile(r"(?:\$|€|USD\s*|USDT\s*)(\d{2,5})", re.IGNORECASE)
+REGEX_DINERO = re.compile(r"(?:\$|€|USD\s*|USDT\s*)(\d{2,5})\b", re.IGNORECASE)
 REGEX_URGENTE = re.compile(r"\b(urgent|asap|today|right\s*now|quick\s*job|within\s*\d+\s*hours?|immediately)\b", re.IGNORECASE)
 REGEX_BALLENA = re.compile(r"\b(ongoing|retainer|long[\s-]*term|monthly|saas|agency|full\s*mvp)\b", re.IGNORECASE)
 
@@ -119,6 +123,7 @@ def construir_dm_reddit(autor: str, titulo: str, pitch: str) -> str | None:
 def publicar_telegram(mensaje_html: str, fallback_texto: str, botones: list | None = None, chat_id: str | None = None) -> bool:
     destino = chat_id or TG_CHANNEL_ID
     if not TG_TOKEN or not destino:
+        log_evento("[!] Faltan credenciales de Telegram")
         print(f"    {C.RED}[!] Faltan credenciales de Telegram.{C.RESET}", flush=True)
         return False
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -133,34 +138,38 @@ def publicar_telegram(mensaje_html: str, fallback_texto: str, botones: list | No
     try:
         r = SESSION.post(url, json=payload, timeout=15)
         if r.status_code == 200:
-            print(f"    {C.GREEN}[TG] Alerta PRIME enviada!{C.RESET}", flush=True)
+            print(f"    {C.GREEN}[TG] Alerta enviada!{C.RESET}", flush=True)
             return True
         payload.pop("reply_markup", None)
         r2 = SESSION.post(url, json=payload, timeout=15)
         if r2.status_code == 200:
             return True
-        r3 = SESSION.post(url, json={"chat_id": destino, "text": fallback_texto[:4000], "disable_web_page_preview": True}, timeout=15)
+        plano_limpio = re.sub(r"<[^>]+>", "", fallback_texto)[:4000]
+        r3 = SESSION.post(url, json={"chat_id": destino, "text": plano_limpio, "disable_web_page_preview": True}, timeout=15)
         return r3.status_code == 200
     except Exception as e:
+        log_evento(f"[TG] Excepcion: {e}")
         print(f"    {C.RED}[TG] Excepcion: {e}{C.RESET}", flush=True)
     return False
 
-def pasa_blacklist_custom(texto: str, extras: list) -> bool:
+def pasa_blacklist_custom(texto: str, extras) -> bool:
     if not extras:
         return True
+    if isinstance(extras, str):
+        extras = [w.strip() for w in extras.split(",") if w.strip()]
     low = texto.lower()
     return not any(str(w).strip().lower() in low for w in extras if str(w).strip())
 
 def procesar_child_reddit(d: dict, cfg: dict, fuente_forzada: str | None = None) -> dict | None:
     ahora = time.time()
-    max_h = int(cfg.get("max_horas_post", 12))
+    max_h = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
     creado = d.get("created_utc", ahora)
     edad_seg = max(0, ahora - creado)
     if edad_seg > (max_h * 3600):
         return None
-    titulo = d.get("title", "").strip()
+    titulo = (d.get("title") or "").strip()
     cuerpo = (d.get("selftext") or "")[:1600]
-    sub = d.get("subreddit", "")
+    sub = d.get("subreddit") or ""
     fuente = fuente_forzada or (f"r/{sub}" if sub else "Reddit")
     combinado = f"{titulo} {cuerpo}"
     if not titulo or REGEX_DESCARTAR.search(titulo) or REGEX_SPAM.search(combinado):
@@ -172,16 +181,16 @@ def procesar_child_reddit(d: dict, cfg: dict, fuente_forzada: str | None = None)
 
     es_tech = bool(REGEX_TECH.search(combinado))
     edad_min = int(edad_seg // 60)
-    comentarios = int(d.get("num_comments", 0))
+    comentarios = safe_int(d.get("num_comments", 0), 0)
     comp_txt, comp_bonus = calcular_competencia(edad_min, comentarios)
     dinero_match = REGEX_DINERO.search(combinado)
-    dinero_local = int(dinero_match.group(1)) if dinero_match else 0
+    dinero_local = safe_int(dinero_match.group(1), 0) if dinero_match else 0
     prio_tag = detectar_prioridad_tag(combinado, dinero_local)
 
     return {
         "id": d.get("name") or d.get("id") or d.get("permalink"),
         "fuente": fuente,
-        "autor": d.get("author", ""),
+        "autor": d.get("author") or "",
         "titulo": titulo,
         "titulo_norm": normalizar_titulo(titulo),
         "titulo_palabras": titulo_palabras_limpio(titulo),
@@ -199,7 +208,7 @@ def procesar_child_reddit(d: dict, cfg: dict, fuente_forzada: str | None = None)
 
 def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
     resultados = []
-    max_h = int(cfg.get("max_horas_post", 12))
+    max_h = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
     ahora = datetime.now(timezone.utc)
     try:
         root = ET.fromstring(xml_text)
@@ -247,7 +256,7 @@ def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
             continue
 
         dinero_m = REGEX_DINERO.search(combinado)
-        dinero_local = int(dinero_m.group(1)) if dinero_m else 0
+        dinero_local = safe_int(dinero_m.group(1), 0) if dinero_m else 0
         prio_tag = detectar_prioridad_tag(combinado, dinero_local)
         resultados.append({
             "id": post_id or link,
@@ -270,7 +279,7 @@ def parsear_atom_reddit(xml_text: str, sub: str, cfg: dict) -> list:
     return resultados
 
 def obtener_posts_subreddit(sub: str, cfg: dict) -> list:
-    time.sleep(random.uniform(0.10, 0.40))
+    time.sleep(random.uniform(0.10, 0.35))
     items_validos = []
 
     try:
@@ -306,11 +315,13 @@ def obtener_posts_subreddit(sub: str, cfg: dict) -> list:
                 combinado = f"{titulo} {texto}"
                 if not titulo or REGEX_DESCARTAR.search(titulo) or REGEX_SPAM.search(combinado):
                     continue
+                if not pasa_blacklist_custom(combinado, cfg.get("palabras_extra_blacklist", [])):
+                    continue
                 if sub.lower() not in SUBS_SIN_TAG_OBLIGATORIO and not REGEX_ACEPTAR.search(titulo):
                     continue
                 autor_raw = (raw.get("author") or "").replace("/u/", "").strip()
                 dinero_m = REGEX_DINERO.search(combinado)
-                dinero_local = int(dinero_m.group(1)) if dinero_m else 0
+                dinero_local = safe_int(dinero_m.group(1), 0) if dinero_m else 0
                 items_validos.append({
                     "id": raw.get("guid", raw.get("link")),
                     "fuente": f"r/{sub}",
@@ -366,8 +377,8 @@ def buscar_github_bounties() -> list:
                 m_dinero = REGEX_DINERO.search(combinado)
                 if not m_dinero:
                     continue
-                comentarios = int(iss.get("comments", 0))
-                dinero_local = int(m_dinero.group(1))
+                comentarios = safe_int(iss.get("comments", 0), 0)
+                dinero_local = safe_int(m_dinero.group(1), 0)
                 items.append({
                     "id": f"gh_bounty_{iss.get('id')}",
                     "fuente": "GitHub Bounty",
@@ -430,7 +441,7 @@ def buscar_hackernews_freelance() -> list:
     return items
 
 def recolectar_todo(cfg: dict) -> list:
-    ofertas = []
+    ofertas_raw = []
     q_global_1 = '("[Hiring]" OR "[Task]") (python OR scraper OR scraping OR selenium OR playwright OR csv OR data)'
     q_global_2 = '("[Hiring]" OR "[Task]") (telegram OR discord OR bot OR automation OR shopify OR n8n OR zapier OR api)'
 
@@ -442,12 +453,25 @@ def recolectar_todo(cfg: dict) -> list:
         futuros.append(pool.submit(buscar_hackernews_freelance))
         for fut in as_completed(futuros):
             try:
-                ofertas.extend(fut.result())
+                ofertas_raw.extend(fut.result())
             except Exception:
                 pass
 
-    ofertas.sort(key=lambda x: (x["comp_bonus"], x["dinero_local"] > 0, -(x["edad_min"] or 999)), reverse=True)
-    return ofertas
+    # Deduplicacion inmediata en memoria (evita procesar el mismo post en subs + global)
+    ofertas_raw.sort(key=lambda x: (x["comp_bonus"], x["dinero_local"] > 0, -(x["edad_min"] or 999)), reverse=True)
+    unicas = []
+    vistos_ids = set()
+    vistos_tit = set()
+    for it in ofertas_raw:
+        pid = it.get("id")
+        tn = it.get("titulo_norm")
+        if pid in vistos_ids or (tn and tn in vistos_tit):
+            continue
+        vistos_ids.add(pid)
+        if tn:
+            vistos_tit.add(tn)
+        unicas.append(it)
+    return unicas
 
 def contexto_aprendizaje_crm(conn) -> str:
     if conn is None:
@@ -465,13 +489,13 @@ def contexto_aprendizaje_crm(conn) -> str:
         return ""
 
 def revisar_recordatorios_followup(conn, cfg: dict) -> int:
-    horas = int(cfg.get("recordatorio_followup_horas", 20))
+    horas = max(1, safe_int(cfg.get("recordatorio_followup_horas", 20), 20))
     pendientes = conn.execute(
         f"""
         SELECT id, autor, titulo, link FROM leads
         WHERE estado = 'contactado'
           AND followup_enviado = 0
-          AND fecha <= datetime('now', '-{horas} hours')
+          AND COALESCE(contactado_ts, fecha) <= datetime('now', '-{horas} hours')
         LIMIT 3
         """
     ).fetchall()
@@ -500,7 +524,7 @@ def evaluar_y_enviar(item: dict, cfg: dict, conn=None, modo_sonido: bool = False
     autor = item.get("autor", "")
     comp_txt = item.get("comp_txt", "🔎 En radar")
     prio_tag = item.get("prioridad_tag", "")
-    score_min = int(cfg.get("score_minimo", 6))
+    score_min = safe_int(cfg.get("score_minimo", 6), 6)
 
     print(f"  {C.CYAN}[>] IA ({fuente}):{C.RESET} {titulo[:62]}...", flush=True)
     regla = (
@@ -522,15 +546,16 @@ def evaluar_y_enviar(item: dict, cfg: dict, conn=None, modo_sonido: bool = False
     if not datos:
         return False, False, tok_est
 
-    score = int(datos.get("score", 0))
-    print(f"    [=] Relevante: {datos.get('relevante')} | Score: {score}/10 | {comp_txt} {prio_tag}", flush=True)
+    es_relevante = safe_bool(datos.get("relevante"))
+    score = extraer_score(datos.get("score", 0))
+    print(f"    [=] Relevante: {es_relevante} | Score: {score}/10 | {comp_txt} {prio_tag}", flush=True)
     enviado = False
 
-    if datos.get("relevante") and score >= score_min:
-        categoria = str(datos.get("categoria", "Tech"))
-        presupuesto = str(datos.get("presupuesto", "Por definir"))
-        resumen = str(datos.get("resumen_es", ""))
-        pitch = str(datos.get("pitch_en", ""))
+    if es_relevante and score >= score_min:
+        categoria = str(datos.get("categoria") or "Tech")
+        presupuesto = str(datos.get("presupuesto") or "Por definir")
+        resumen = str(datos.get("resumen_es") or "")
+        pitch = str(datos.get("pitch_en") or "")
         confianza = verificar_confianza_reddit(autor) if item.get("origen") == "reddit" else "🔎 Plataforma externa"
         etiqueta = "🔥🔥 PRIORIDAD MAXIMA" if score >= 8 else "⚡ OPORTUNIDAD"
         linea_prio = f"🏷 <b>Alerta:</b> {html.escape(prio_tag)}\n" if prio_tag else ""
@@ -573,6 +598,7 @@ def evaluar_y_enviar(item: dict, cfg: dict, conn=None, modo_sonido: bool = False
             botones.append(fila)
 
         enviado = publicar_telegram(msg_html, msg_plano, botones=botones)
+        log_evento(f"Lead {score}/10 ({fuente}): {titulo[:55]}")
         if modo_sonido and score >= 7:
             alerta_sonora("ballena" if "HIGH-TICKET" in prio_tag else ("alta" if score >= 8 else "media"))
 
@@ -599,7 +625,7 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
         pendientes = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('nuevo', 'contactado', 'negociando')").fetchone()[0]
 
         msg = (
-            f"<b>📊 RESUMEN ZEROTOUCH PRIME ({hoy})</b>\n\n"
+            f"<b>📊 RESUMEN ZEROTOUCH TITAN ({hoy})</b>\n\n"
             f"🛡️ <b>Basura bloqueada sin IA:</b> {desc} (~{t_ah:,} tokens ahorrados)\n"
             f"🤖 <b>Ofertas analizadas hoy:</b> {ev} (~{t_us:,} tokens usados)\n"
             f"⚡ <b>Alertas enviadas hoy:</b> {al}\n"
@@ -614,10 +640,11 @@ def enviar_resumen_telegram(chat_id: str | None = None) -> str:
 
 def ejecutar_ciclo(modo_sonido: bool = False) -> dict:
     cfg = cargar_config()
-    max_ia = int(cfg.get("max_ia_por_ciclo", 16))
+    max_ia = max(1, safe_int(cfg.get("max_ia_por_ciclo", 16), 16))
     t0 = time.time()
     hora = datetime.now().strftime("%H:%M:%S")
-    print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar PRIME v10.0 (16 Fuentes + Jaccard + Trust + Ballenas)...{C.RESET}", flush=True)
+    log_evento("Iniciando barrido TITAN (16 fuentes)")
+    print(f"\n{C.BOLD}{C.CYAN}[{hora}] Iniciando Radar TITAN v11.5 (16 Fuentes + Dedup + Trust)...{C.RESET}", flush=True)
 
     conn = preparar_db()
     descartados_local = 0
@@ -681,31 +708,30 @@ def ejecutar_ciclo(modo_sonido: bool = False) -> dict:
             tok_usados=tok_usados,
             tok_ahorrados=tok_ahorrados,
         )
-        dur = time.time() - t0
-        print(
-            f"{C.GREEN}Ciclo PRIME terminado en {dur:.1f}s | Filtrados 0-Tokens: {descartados_local} (+{duplicados_sem} dup) | IA: {evaluadas_ia} | Alertas: {alertas_enviadas} | Followups: {followups}{C.RESET}",
-            flush=True,
-        )
+        dur = round(time.time() - t0, 1)
+        resumen_txt = f"Ciclo terminado en {dur}s | Filtrados: {descartados_local + duplicados_sem} | IA: {evaluadas_ia} | Alertas: {alertas_enviadas}"
+        log_evento(resumen_txt)
+        print(f"{C.GREEN}{resumen_txt} | Followups: {followups}{C.RESET}", flush=True)
         return {
             "descartados": descartados_local + duplicados_sem,
             "ia": evaluadas_ia,
             "alertas": alertas_enviadas,
             "followups": followups,
-            "segundos": round(dur, 1),
+            "segundos": dur,
         }
     finally:
         conn.close()
 
 def modo_sniper() -> None:
     cfg = cargar_config()
-    intervalo = max(45, int(cfg.get("intervalo_sniper_seg", 70)))
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR PRIME (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
+    intervalo = max(45, safe_int(cfg.get("intervalo_sniper_seg", 70), 70))
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODO FRANCOTIRADOR TITAN (Cada {intervalo}s + Ballenas + Sonido) ==={C.RESET}")
     print(f"{C.DIM}Minimiza esta ventana mientras usas tu PC. Presiona Ctrl+C para salir.{C.RESET}")
     ciclo_n = 0
     try:
         while True:
             ciclo_n += 1
-            print(f"\n{C.DIM}--- Barrido PRIME #{ciclo_n} ---{C.RESET}")
+            print(f"\n{C.DIM}--- Barrido TITAN #{ciclo_n} ---{C.RESET}")
             ejecutar_ciclo(modo_sonido=True)
             print(f"{C.DIM}Esperando {intervalo}s para el proximo barrido...{C.RESET}", flush=True)
             time.sleep(intervalo)

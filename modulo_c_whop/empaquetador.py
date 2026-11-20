@@ -11,6 +11,7 @@ if ROOT_DIR not in sys.path:
 
 from core_ia import (
     C,
+    log_evento,
     cargar_config,
     generar_texto_ia,
     extraer_etiqueta,
@@ -95,19 +96,18 @@ def crear_factura_html(cliente: str, proyecto: str, monto: str, tipo_cobro: str 
 </html>"""
     return num_factura, factura_html
 
-def empaquetar_whop() -> None:
+def empaquetar_producto_whop(ruta: str, nombre: str) -> dict:
     cfg = cargar_config()
-    print(f"\n{C.BOLD}{C.MAGENTA}--- FABRICA PRIME DE PRODUCTOS DIGITALES PARA WHOP ---{C.RESET}")
-    ruta_default = os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
-    ruta = input(f"Ruta del script [Enter para {ruta_default}]: ").strip() or ruta_default
-    if not os.path.exists(ruta):
-        print(f"{C.RED}[!] No encontre el archivo: {ruta}{C.RESET}")
-        return
+    ruta_limpia = (ruta or "").strip() or os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
+    if not os.path.isabs(ruta_limpia):
+        ruta_limpia = os.path.join(ROOT_DIR, ruta_limpia)
+    if not os.path.isfile(ruta_limpia):
+        return {"error": f"No existe el archivo: {ruta_limpia}"}
 
-    nombre = input("Nombre comercial de la herramienta (ej. AutoLead Scraper Pro): ").strip() or "ZeroTouch Automation Tool"
+    nombre = (nombre or "").strip() or "ZeroTouch Automation Tool"
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", nombre.lower()).strip("_") or "producto_whop"
 
-    with open(ruta, "r", encoding="utf-8") as f:
+    with open(ruta_limpia, "r", encoding="utf-8") as f:
         codigo_raw = f.read()
 
     prompt = (
@@ -135,11 +135,9 @@ def empaquetar_whop() -> None:
         f"SCRIPT ORIGINAL:\n{codigo_raw}"
     )
 
-    print(f"{C.CYAN}[*] Refactorizando codigo, validando AST y armando paquete comercial...{C.RESET}", flush=True)
     texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=34)
     if not texto:
-        print(f"{C.RED}[!] No se pudo empaquetar en este intento.{C.RESET}")
-        return
+        return {"error": "La IA no respondio en este intento."}
 
     cod, valido = validar_y_reparar_python(extraer_etiqueta(texto, "CODIGO_LIMPIO"), descripcion=nombre)
     cfg_ej = limpiar_bloque_codigo(extraer_etiqueta(texto, "CONFIG_EJEMPLO")) or '{\n  "target_url": "https://example.com",\n  "output_file": "output.csv"\n}'
@@ -183,14 +181,34 @@ def empaquetar_whop() -> None:
         with open(os.path.join(carpeta_salida, fname), "w", encoding="utf-8") as f:
             f.write(content)
 
-    f_zip = os.path.join(carpeta_salida, f"{slug}_whop_prime.zip")
+    f_zip = os.path.join(carpeta_salida, f"{slug}_whop_titan.zip")
     with zipfile.ZipFile(f_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname in ("main.py", "config_ejemplo.json", "requirements.txt", "README.md", "LICENSE.txt", "RUN_WINDOWS.bat"):
             zf.write(os.path.join(carpeta_salida, fname), arcname=fname)
 
+    log_evento(f"Producto Whop empaquetado: {os.path.basename(f_zip)}")
+    return {
+        "zip_path": f_zip,
+        "carpeta": carpeta_salida,
+        "ast_valido": valido,
+        "whop_copy": whop,
+        "promo": promo,
+        "guion": guion,
+    }
+
+def empaquetar_whop() -> None:
+    print(f"\n{C.BOLD}{C.MAGENTA}--- FABRICA TITAN DE PRODUCTOS DIGITALES PARA WHOP ---{C.RESET}")
+    ruta_default = os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
+    ruta = input(f"Ruta del script [Enter para {ruta_default}]: ").strip() or ruta_default
+    nombre = input("Nombre comercial (ej. AutoLead Scraper Pro): ").strip() or "ZeroTouch Automation Tool"
+    print(f"{C.CYAN}[*] Refactorizando codigo, validando AST y armando paquete comercial...{C.RESET}", flush=True)
+    res = empaquetar_producto_whop(ruta, nombre)
+    if res.get("error"):
+        print(f"{C.RED}[!] {res['error']}{C.RESET}")
+        return
     print("\n" + "=" * 70)
-    print(f"{C.GREEN}PRODUCTO WHOP PRIME ({'AST OK' if valido else 'REVISAR'}) EN: {carpeta_salida}{C.RESET}")
-    print(f"  -> ZIP comprador     : {slug}_whop_prime.zip (incluye RUN_WINDOWS.bat + LICENSE)")
+    print(f"{C.GREEN}PRODUCTO WHOP TITAN ({'AST OK' if res['ast_valido'] else 'REVISAR'}) EN: {res['carpeta']}{C.RESET}")
+    print(f"  -> ZIP comprador     : {os.path.basename(res['zip_path'])} (incluye RUN_WINDOWS.bat + LICENSE)")
     print("  -> Copy de Whop      : WHOP_LISTING.md")
     print("  -> Trafico gratis    : POST_PROMO_GRATIS.txt")
     print("  -> Video TikTok/Reel : GUION_VIDEO_30S.txt")
@@ -216,7 +234,7 @@ def generar_entrega_y_factura() -> None:
     with open(ruta_factura, "w", encoding="utf-8") as f:
         f.write(factura_html)
 
-    if ruta_script.upper() != "NO" and os.path.exists(ruta_script):
+    if ruta_script.upper() != "NO" and os.path.isfile(ruta_script):
         with open(ruta_script, "r", encoding="utf-8") as f:
             cod = f.read()
         todos_pip, _ = analizar_dependencias(cod)
@@ -237,7 +255,7 @@ def generar_entrega_y_factura() -> None:
             pass
 
 def main() -> None:
-    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO C: WHOP PRIME & FACTURACION v10.0 ==={C.RESET}")
+    print(f"\n{C.BOLD}{C.MAGENTA}=== MODULO C: WHOP TITAN & FACTURACION v11.5 ==={C.RESET}")
     print(" [1] Empaquetar script como Producto Digital para Whop (.ZIP + Launcher + Copy + Short)")
     print(" [2] Generar Kit de Entrega (.ZIP) + Factura & Micro-Contrato HTML/PDF")
     op = input("\nElige una opcion [1-2]: ").strip()

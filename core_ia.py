@@ -9,8 +9,9 @@ import sqlite3
 import threading
 import subprocess
 import importlib.util
-import requests
+from collections import deque
 from datetime import datetime
+import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -81,11 +82,25 @@ MAPA_PIP = {
     "pyrogram": "pyrogram",
 }
 
+_LOG_LOCK = threading.Lock()
+_LOG_BUFFER: deque[str] = deque(maxlen=80)
+
+def log_evento(msg: str, imprimir: bool = False) -> None:
+    linea = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
+    with _LOG_LOCK:
+        _LOG_BUFFER.append(linea)
+    if imprimir:
+        print(linea, flush=True)
+
+def obtener_logs(limite: int = 50) -> list[str]:
+    with _LOG_LOCK:
+        return list(_LOG_BUFFER)[-limite:]
+
 def safe_float(val, default: float = 0.0) -> float:
     try:
         if val is None or val == "":
             return default
-        return float(val)
+        return float(str(val).replace("$", "").replace(",", "").strip())
     except (ValueError, TypeError):
         return default
 
@@ -93,9 +108,24 @@ def safe_int(val, default: int = 0) -> int:
     try:
         if val is None or val == "":
             return default
-        return int(float(val))
+        return int(float(str(val).strip()))
     except (ValueError, TypeError):
         return default
+
+def safe_bool(val) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    return str(val or "").strip().lower() in ("true", "1", "yes", "si", "sí")
+
+def extraer_score(val) -> int:
+    if isinstance(val, (int, float)):
+        return max(0, min(10, int(round(val))))
+    m = re.search(r"(\d+(?:\.\d+)?)", str(val or ""))
+    if not m:
+        return 0
+    return max(0, min(10, int(round(float(m.group(1))))))
 
 def cargar_env(ruta: str | None = None) -> None:
     archivo = ruta or os.path.join(ROOT_DIR, ".env")
@@ -117,16 +147,18 @@ def cargar_config() -> dict:
                 user_cfg = json.load(f)
                 if isinstance(user_cfg, dict):
                     cfg.update(user_cfg)
-        except Exception:
-            pass
+        except Exception as e:
+            log_evento(f"Aviso leyendo config.json: {e}")
     else:
         if not os.getenv("GITHUB_ACTIONS"):
             guardar_config(cfg)
     return cfg
 
 def guardar_config(cfg: dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    tmp_path = CONFIG_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, CONFIG_PATH)
 
 MODELOS_PREFERIDOS = [
     "gemini-3.5-flash-lite",
@@ -156,6 +188,20 @@ def extraer_etiqueta(texto: str, tag: str) -> str:
 
 def limpiar_bloque_codigo(texto: str) -> str:
     return re.sub(r"^```[a-zA-Z0-9_-]*\s*|\s*```$", "", texto.strip())
+
+def parsear_json_seguro(texto: str) -> dict | None:
+    if not texto:
+        return None
+    limpio = limpiar_bloque_codigo(texto)
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", limpio):
+        try:
+            obj, _ = decoder.raw_decode(limpio[match.start():])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return None
 
 def copiar_al_portapapeles(texto: str) -> bool:
     if not texto or os.name != "nt":
@@ -220,7 +266,8 @@ def preparar_db() -> sqlite3.Connection:
             estado TEXT DEFAULT 'nuevo',
             ganancia_usd REAL DEFAULT 0,
             notas TEXT DEFAULT '',
-            followup_enviado INTEGER DEFAULT 0
+            followup_enviado INTEGER DEFAULT 0,
+            contactado_ts DATETIME DEFAULT NULL
         )
         """
     )
@@ -232,6 +279,7 @@ def preparar_db() -> sqlite3.Connection:
         ("prioridad_tag", "TEXT DEFAULT ''"),
         ("notas", "TEXT DEFAULT ''"),
         ("followup_enviado", "INTEGER DEFAULT 0"),
+        ("contactado_ts", "DATETIME DEFAULT NULL"),
     ]:
         if col_name not in cols_l:
             conn.execute(f"ALTER TABLE leads ADD COLUMN {col_name} {col_def}")
@@ -280,6 +328,11 @@ def crear_backup_rotativo(max_backups: int = 7) -> str | None:
     bdir = os.path.join(ROOT_DIR, "backups")
     os.makedirs(bdir, exist_ok=True)
     dst = os.path.join(bdir, f"zerotouch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+    conn = preparar_db()
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    finally:
+        conn.close()
     shutil.copy2(DB_PATH, dst)
     archivos = sorted([os.path.join(bdir, f) for f in os.listdir(bdir) if f.endswith(".db")], key=os.path.getmtime)
     while len(archivos) > max_backups:
@@ -288,6 +341,7 @@ def crear_backup_rotativo(max_backups: int = 7) -> str | None:
             os.remove(viejo)
         except OSError:
             pass
+    log_evento(f"Backup seguro creado: {os.path.basename(dst)}")
     return dst
 
 def verificar_confianza_reddit(autor: str) -> str:
@@ -302,13 +356,13 @@ def verificar_confianza_reddit(autor: str) -> str:
     try:
         r = SESSION.get(
             f"https://www.reddit.com/user/{autor}/about.json",
-            headers={"User-Agent": "python:zerotouch-trust:v11.0 (by /u/zerotouch_freelance)"},
+            headers={"User-Agent": "python:zerotouch-trust:v11.5 (by /u/zerotouch_freelance)"},
             timeout=6,
         )
         if r.status_code == 200:
             d = r.json().get("data", {})
             creado = d.get("created_utc")
-            karma = int(d.get("total_karma", 0))
+            karma = safe_int(d.get("total_karma", 0), 0)
             if creado:
                 dias = max(0, int((ahora - creado) / 86400))
                 edad_txt = f"{dias // 365}a" if dias >= 365 else (f"{dias // 30}m" if dias >= 30 else f"{dias}d")
@@ -328,6 +382,7 @@ def verificar_confianza_reddit(autor: str) -> str:
 def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = False, timeout: int = 24) -> str | None:
     api_key = os.getenv("GEMINI_API_KEY_FREE")
     if not api_key:
+        log_evento("[!] Falta GEMINI_API_KEY_FREE en .env")
         print(f"    {C.RED}[!] Falta GEMINI_API_KEY_FREE.{C.RESET}", flush=True)
         return None
 
@@ -367,25 +422,19 @@ def generar_texto_ia(prompt: str, temperatura: float = 0.2, json_mode: bool = Fa
             elif r.status_code in (429, 503):
                 with _CACHE_LOCK:
                     MODEL_COOLDOWNS[modelo] = time.time() + 60
+                log_evento(f"Modelo {modelo} en limite ({r.status_code}), cooldown 60s")
                 print(f"    {C.YELLOW}[~] {modelo} ocupado ({r.status_code}), cooldown 60s...{C.RESET}", flush=True)
             else:
                 print(f"    {C.YELLOW}[~] {modelo} HTTP {r.status_code}, saltando...{C.RESET}", flush=True)
         except Exception:
             print(f"    {C.YELLOW}[~] {modelo} timeout/error, saltando...{C.RESET}", flush=True)
 
+    log_evento("[!] Ningun modelo de Gemini respondio en este intento")
     return None
 
 def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 16) -> dict | None:
     texto = generar_texto_ia(prompt, temperatura=temperatura, json_mode=True, timeout=timeout)
-    if not texto:
-        return None
-    match = re.search(r"\{.*\}", texto, re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
+    return parsear_json_seguro(texto) if texto else None
 
 def analizar_dependencias(codigo: str) -> tuple[list[str], list[str]]:
     todos_pip = set()
@@ -419,6 +468,7 @@ def validar_y_reparar_python(codigo: str, descripcion: str = "") -> tuple[str, b
         ast.parse(codigo)
         return codigo, True
     except SyntaxError as e:
+        log_evento(f"SyntaxError linea {e.lineno}, auto-reparando con IA")
         print(f"    {C.YELLOW}[!] SyntaxError en linea {e.lineno} ({e.msg}). Auto-reparando con IA...{C.RESET}", flush=True)
         fix_prompt = (
             f"Corrige este error de sintaxis en Python 3.12: linea {e.lineno}, error: {e.msg}.\n"

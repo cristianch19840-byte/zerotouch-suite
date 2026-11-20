@@ -12,6 +12,7 @@ if ROOT_DIR not in sys.path:
 from core_ia import (
     C,
     SESSION,
+    log_evento,
     cargar_config,
     preparar_db,
     verificar_confianza_reddit,
@@ -23,19 +24,33 @@ from core_ia import (
 )
 
 def descargar_post_reddit(url: str) -> tuple[str | None, str, str]:
-    limpia = url.split("?")[0].rstrip("/")
-    json_url = f"{limpia}.json?raw_json=1"
-    headers = {"User-Agent": "python:zerotouch-copiloto:v10.0 (by /u/zerotouch_freelance)"}
+    headers = {"User-Agent": "python:zerotouch-copiloto:v11.5 (by /u/zerotouch_freelance)"}
     try:
+        objetivo = url.strip()
+        # Resuelve enlaces cortos de app movil (/s/xxxx) o redd.it antes de pedir .json
+        if "/s/" in objetivo or "redd.it" in objetivo or "old.reddit.com" in objetivo or "m.reddit.com" in objetivo:
+            r_res = SESSION.get(objetivo, headers=headers, allow_redirects=True, timeout=10)
+            if r_res.url:
+                objetivo = r_res.url
+        limpia = objetivo.split("?")[0].rstrip("/")
+        if not limpia.endswith(".json"):
+            json_url = f"{limpia}.json?raw_json=1"
+        else:
+            json_url = limpia
         r = SESSION.get(json_url, headers=headers, timeout=12)
         if r.status_code == 200:
-            data = r.json()[0]["data"]["children"][0]["data"]
-            titulo = data.get("title", "")
-            cuerpo = data.get("selftext", "")
-            sub = data.get("subreddit_name_prefixed", "Reddit")
-            autor = data.get("author", "")
-            return f"Fuente: {sub}\nAutor: u/{autor}\nTitulo: {titulo}\n\n{cuerpo}".strip(), autor, titulo
+            payload = r.json()
+            if isinstance(payload, list) and payload:
+                children = payload[0].get("data", {}).get("children", [])
+                if children:
+                    data = children[0].get("data", {})
+                    titulo = data.get("title", "")
+                    cuerpo = data.get("selftext", "")
+                    sub = data.get("subreddit_name_prefixed", "Reddit")
+                    autor = data.get("author", "")
+                    return f"Fuente: {sub}\nAutor: u/{autor}\nTitulo: {titulo}\n\n{cuerpo}".strip(), autor, titulo
     except Exception as e:
+        log_evento(f"Copiloto no pudo leer link Reddit: {e}")
         print(f"{C.YELLOW}[!] No pude leer el link automatico ({e}).{C.RESET}")
     return None, "", ""
 
@@ -46,7 +61,7 @@ def cargar_desde_crm(lead_id: int) -> tuple[str | None, str, str]:
         if not row:
             return None, "", ""
         fuente, autor, titulo, pres, link = row
-        if link and "reddit.com" in link:
+        if link and ("reddit.com" in link or "redd.it" in link):
             oferta, a_red, t_red = descargar_post_reddit(link)
             if oferta:
                 return oferta, a_red or autor, t_red or titulo
@@ -99,7 +114,7 @@ def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", gua
         f"OFERTA DEL CLIENTE:\n{oferta}"
     )
 
-    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=32)
+    texto = generar_texto_ia(prompt, temperatura=0.25, json_mode=False, timeout=34)
     if not texto:
         return None
 
@@ -135,13 +150,14 @@ def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", gua
         os.makedirs(carpeta_proj, exist_ok=True)
         with open(os.path.join(carpeta_proj, "script.py"), "w", encoding="utf-8") as f:
             f.write(codigo)
-        with open(os.path.join(carpeta_proj, "kit_cierre_prime.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(carpeta_proj, "kit_cierre_titan.txt"), "w", encoding="utf-8") as f:
             f.write(
                 f"CONFIANZA CLIENTE: {confianza}\n\nDIAGNOSTICO:\n{diag}\n\nPRECIOS:\n{precios}\n\n"
                 f"PITCH A (TECNICO):\n{pitch_a}\n\nPITCH B (CONSULTIVO):\n{pitch_b}\n\n"
                 f"PREGUNTAS:\n{preguntas}\n\nMICRO-CONTRATO:\n{contrato}\n\n"
                 f"FOLLOWUP 24H:\n{followup}\n\nCOBRO:\n{cobro}\n"
             )
+        log_evento(f"Copiloto genero kit + borrador ({'AST OK' if valido else 'Revisar'})")
 
     return {
         "confianza": confianza,
@@ -163,8 +179,8 @@ def analizar_oferta_completo(oferta: str, autor: str = "", titulo: str = "", gua
     }
 
 def main() -> None:
-    print(f"\n{C.BOLD}{C.CYAN}=== MODULO B: COPILOTO PRIME v10.0 (A/B + CONTRATO + AST) ==={C.RESET}")
-    print("Opcion 1: Pega un LINK de Reddit y dale Enter.")
+    print(f"\n{C.BOLD}{C.CYAN}=== MODULO B: COPILOTO TITAN v11.5 (A/B + CONTRATO + AST) ==={C.RESET}")
+    print("Opcion 1: Pega un LINK de Reddit (PC o App Movil /s/) y dale Enter.")
     print("Opcion 2: Escribe #<ID> de tu CRM (ej. #4) y dale Enter.")
     print("Opcion 3: Pega el texto de la oferta, escribe FIN en linea nueva y dale Enter.\n")
 
@@ -181,7 +197,7 @@ def main() -> None:
         if not oferta:
             print(f"{C.RED}[!] No existe el lead {primera} en tu CRM.{C.RESET}")
             return
-    elif primera.startswith("http") and "reddit.com" in primera:
+    elif primera.startswith("http") and ("reddit.com" in primera or "redd.it" in primera):
         print(f"{C.DIM}[*] Descargando post directo desde Reddit...{C.RESET}", flush=True)
         oferta, autor_reddit, titulo_reddit = descargar_post_reddit(primera)
         if not oferta:
@@ -199,7 +215,7 @@ def main() -> None:
             lineas.append(linea)
         oferta = "\n".join(lineas).strip()
 
-    print(f"{C.CYAN}[*] Ejecutando motor Copiloto PRIME...{C.RESET}", flush=True)
+    print(f"{C.CYAN}[*] Ejecutando motor Copiloto TITAN...{C.RESET}", flush=True)
     res = analizar_oferta_completo(oferta, autor=autor_reddit, titulo=titulo_reddit, guardar_archivos=True)
     if not res:
         print(f"{C.RED}[!] No se pudo generar respuesta en este momento.{C.RESET}")
@@ -236,7 +252,7 @@ def main() -> None:
             if input("Quieres instalarlos automaticamente ahora? [s/N]: ").strip().lower() == "s":
                 subprocess.run([sys.executable, "-m", "pip", "install", *res["faltantes_pip"]])
         elif res["todos_pip"]:
-            print(f"{C.GREEN}[+] Todas las librerias ({', '.join(res['todos_pip'])}) ya estan instaladas en tu PC!{C.RESET}")
+            print(f"{C.GREEN}[+] Todas las librerias ({', '.join(res['todos_pip'])}) ya estan instaladas!{C.RESET}")
         print()
 
 if __name__ == "__main__":

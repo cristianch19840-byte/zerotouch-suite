@@ -1,12 +1,9 @@
 import os
 import io
-import re
 import csv
 import sys
 import json
-import time
 import socket
-import zipfile
 import threading
 import webbrowser
 from datetime import datetime
@@ -21,31 +18,31 @@ from core_ia import (
     SESSION,
     safe_float,
     safe_int,
+    log_evento,
+    obtener_logs,
     cargar_config,
     guardar_config,
     preparar_db,
     crear_backup_rotativo,
     generar_texto_ia,
     extraer_etiqueta,
-    limpiar_bloque_codigo,
-    validar_y_reparar_python,
-    analizar_dependencias,
 )
-from modulo_a_radar_whop.motor_zerotouch_v4 import ejecutar_ciclo
+from modulo_a_radar_whop.motor_zerotouch_v4 import ejecutar_ciclo, evaluar_y_enviar
 from modulo_b_ejecutor.copiloto import descargar_post_reddit, cargar_desde_crm, analizar_oferta_completo
-from modulo_c_whop.empaquetador import crear_factura_html
+from modulo_c_whop.empaquetador import crear_factura_html, empaquetar_producto_whop
 from modulo_d_marketing.iman_clientes import responder_objecion_ia
 
 SCAN_LOCK = threading.Lock()
+SNIPER_LOCK = threading.Lock()
 SCAN_STATE = {"running": False, "last_result": None, "sniper_on": False, "sniper_ciclos": 0}
-SNIPER_STOP = threading.Event()
+CURRENT_SNIPER_STOP: threading.Event | None = None
 
 HTML_DASHBOARD = r"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ZeroTouch TITAN v11.0 — Freelance OS</title>
+<title>ZeroTouch TITAN v11.5 — Freelance OS</title>
 <style>
   :root {
     --bg:#060911; --sidebar:#0b1120; --card:#0f172a; --card2:#162033;
@@ -69,7 +66,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   .topbar h2 { margin:0; font-size:20px; }
   .actions { display:flex; gap:8px; flex-wrap:wrap; }
   button, a.btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; text-decoration:none; transition:.15s; display:inline-flex; align-items:center; gap:6px; }
-  button:hover, a.btn:hover { background:#334155; border-color:var(--accent); }
+  button:hover:not(:disabled), a.btn:hover { background:#334155; border-color:var(--accent); }
+  button:disabled { opacity:.55; cursor:not-allowed; }
   button.primary { background:linear-gradient(135deg,#0284c7,#2563eb); border:none; color:#fff; }
   button.success { background:#065f46; border-color:#10b981; color:#ecfdf5; }
   button.purple { background:#581c87; border-color:#a855f7; color:#faf5ff; }
@@ -97,6 +95,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   th, td { padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; font-size:13px; vertical-align:middle; }
   th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; background:#0b1220; }
   tr:hover { background:#131d31; }
+  tr.dirty { background:#1e293b88; }
   .score { display:inline-block; padding:3px 8px; border-radius:6px; font-weight:700; font-size:12px; }
   .s-hi { background:#14532d; color:#86efac; } .s-mid { background:#1e3a8a; color:#93c5fd; }
   .pill { display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:999px; background:#3b0764; color:#e9d5ff; margin-left:6px; font-weight:700; }
@@ -135,7 +134,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 </head>
 <body>
   <aside class="side">
-    <div class="brand">⚡ ZeroTouch <span>TITAN</span><small>v11.0 Unified Freelance OS</small></div>
+    <div class="brand">⚡ ZeroTouch <span>TITAN</span><small>v11.5 Hardened OS</small></div>
     <div class="nav-grp">Operacion</div>
     <button class="nav-btn active" onclick="verTab('t_crm','📡 Radar & CRM',this)">📡 Radar & CRM</button>
     <button class="nav-btn" onclick="verTab('t_stats','📊 Analytics',this)">📊 Analytics</button>
@@ -155,7 +154,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div class="actions">
         <button id="btnSniper" onclick="toggleSniper()">🎯 Auto-Sniper: OFF</button>
         <button class="primary" onclick="lanzarEscaneo()">🚀 Escanear Ahora</button>
-        <button onclick="cargarDatos()">🔄</button>
+        <button onclick="cargarDatos(true)" title="Forzar recarga">🔄</button>
         <a class="btn" href="/api/export">📥 Excel</a>
       </div>
     </div>
@@ -212,16 +211,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <section id="t_ai" class="view">
       <div class="grid-2">
         <div class="card">
-          <h3>🤖 Copiloto TITAN (Link Reddit, #ID o Texto)</h3>
+          <h3>🤖 Copiloto TITAN (Link Reddit PC/Movil, #ID o Texto)</h3>
           <div class="field"><textarea id="aiOferta" placeholder="Pega un link de Reddit, escribe #4, o pega la descripcion del cliente..."></textarea></div>
-          <button class="primary" onclick="correrCopilotoWeb()">Generar Pitch A/B + Precios + Codigo</button>
+          <button class="primary" id="btnCopWeb" onclick="correrCopilotoWeb(this)">Generar Pitch A/B + Precios + Codigo</button>
           <div id="aiResCopiloto" style="margin-top:14px;"></div>
         </div>
         <div class="card">
           <h3>⚔️ Negociador Mata-Objeciones</h3>
           <div class="field"><label>Contexto y precio pedido</label><input id="negCtx" placeholder="Ej. Scraper Shopify, pedi $120 USD"></div>
           <div class="field"><label>Que te respondio el cliente?</label><textarea id="negMsg" placeholder="Ej. Can you do it for $40 or build a free sample first?"></textarea></div>
-          <button class="purple" onclick="correrNegociadorWeb()">Generar Contraofertas</button>
+          <button class="purple" id="btnNegWeb" onclick="correrNegociadorWeb(this)">Generar Contraofertas</button>
           <div id="aiResNeg" style="margin-top:14px;"></div>
         </div>
       </div>
@@ -242,14 +241,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </select>
           </div>
           <div class="field"><label>Enfoque (opcional)</label><input id="mktEnf" placeholder="Python Scraping, Bots Telegram/Discord & Automation"></div>
-          <button class="primary" onclick="generarPostWeb()">Redactar Post Magnetico</button>
+          <button class="primary" onclick="generarPostWeb(this)">Redactar Post Magnetico</button>
           <div id="resMktPost" style="margin-top:14px;"></div>
         </div>
         <div class="card">
           <h3>✨ Bios & Portafolio Profesional</h3>
           <div class="actions" style="margin-bottom:14px;">
-            <button class="purple" onclick="generarBiosWeb()">✨ Generar 3 Bios</button>
-            <button class="success" onclick="generarPortafolioWeb()">📂 Generar PORTAFOLIO.md</button>
+            <button class="purple" onclick="generarBiosWeb(this)">✨ Generar 3 Bios</button>
+            <button class="success" onclick="generarPortafolioWeb(this)">📂 Generar PORTAFOLIO.md</button>
           </div>
           <div id="resMktBios"></div>
         </div>
@@ -304,10 +303,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </div>
           <button class="success" onclick="generarFacturaWeb()">Abrir Factura Lista para PDF</button>
           <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;">
-          <h3>📦 Fabrica 1-Click para Whop (.ZIP)</h3>
+          <h3>📦 Fabrica 1-Click para Whop (.ZIP + Launcher + Licencia)</h3>
           <div class="field"><label>Nombre comercial</label><input id="whopNom" placeholder="Ej. AutoLead Scraper Pro"></div>
           <div class="field"><label>Ruta script (vacio = borrador_cliente.py)</label><input id="whopRuta" placeholder="modulo_b_ejecutor/borrador_cliente.py"></div>
-          <button class="purple" onclick="empaquetarWhopWeb()">Empaquetar .ZIP + Copy + Guion</button>
+          <button class="purple" onclick="empaquetarWhopWeb(this)">Empaquetar .ZIP Comercial</button>
           <div id="resWhop" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -326,19 +325,27 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <div class="field"><label>Whop URL</label><input id="cWhop"></div>
           <div class="grid-2" style="grid-template-columns:1fr 1fr 1fr;gap:10px;">
             <div class="field"><label>Tarifa/Hr USD</label><input id="cTarifa" type="number"></div>
+            <div class="field"><label>TRM COP</label><input id="cTrm" type="number"></div>
             <div class="field"><label>Score Min</label><input id="cScore" type="number"></div>
-            <div class="field"><label>Sniper (s)</label><input id="cSniper" type="number"></div>
           </div>
+          <div class="grid-2" style="grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="field"><label>Sniper (seg)</label><input id="cSniper" type="number"></div>
+            <div class="field"><label>Max Edad Post (hrs)</label><input id="cMaxHrs" type="number"></div>
+          </div>
+          <div class="field"><label>Blacklist Extra (palabras separadas por coma)</label><input id="cBlack" placeholder="ej. unpaid, internship, wordpress"></div>
           <div class="field"><label>Telegram Admin ID (control remoto DM)</label><input id="cAdmin" placeholder="Opcional"></div>
           <button class="primary" onclick="guardarConfigWeb()">💾 Guardar Configuracion</button>
         </div>
         <div class="card">
-          <h3>🩺 Salud del Sistema & Respaldos</h3>
+          <h3>🩺 Salud del Sistema & Logs en Vivo</h3>
           <div class="actions" style="margin-bottom:14px;">
-            <button class="primary" onclick="correrDiagWeb()">🩺 Probar Conexiones</button>
+            <button class="primary" onclick="correrDiagWeb(this)">🩺 Probar Conexiones</button>
+            <button class="purple" onclick="probarTelegramWeb(this)">📨 Alerta Prueba TG</button>
             <button class="success" onclick="hacerBackupWeb()">💾 Backup DB</button>
           </div>
-          <div id="resDiag" class="prebox">Haz clic en "Probar Conexiones" para revisar Reddit, Telegram y Gemini.</div>
+          <div id="resDiag" class="prebox" style="margin-bottom:16px;">Haz clic en "Probar Conexiones" para revisar Reddit, Telegram y Gemini.</div>
+          <h3>📜 Consola de Eventos en Vivo</h3>
+          <div id="liveLogs" class="prebox" style="max-height:220px;color:#93c5fd;">Sin eventos recientes todavia.</div>
         </div>
       </div>
     </section>
@@ -348,7 +355,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <div class="modal">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <h3 style="margin:0;color:var(--accent);" id="modalTitle">🤖 Copiloto TITAN</h3>
-        <button class="sm" onclick="cerrarModal()">Cerrar</button>
+        <button class="sm" onclick="cerrarModal()">Cerrar (Esc)</button>
       </div>
       <div id="modalBody">Cargando...</div>
     </div>
@@ -356,15 +363,28 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   <div id="toast" class="toast"></div>
 
 <script>
-let DATA = { leads:[], kpis:{}, analytics:{}, scan:{} };
+let DATA = { leads:[], kpis:{}, analytics:{}, scan:{}, logs:[] };
 const CLIP_STORE = {};
+const DIRTY_LEADS = new Set();
 let CLIP_SEQ = 0;
 
 function esc(s){ return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 2500); }
+function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 2600); }
 function regClip(txt){ const id = 'c' + (++CLIP_SEQ); CLIP_STORE[id] = String(txt || ''); return id; }
 function copyId(id){ navigator.clipboard.writeText(CLIP_STORE[id] || ''); toast('✅ Copiado al portapapeles'); }
 function cerrarModal(){ document.getElementById('modalBg').classList.remove('open'); }
+document.addEventListener('keydown', e => { if(e.key === 'Escape') cerrarModal(); });
+
+async function apiJson(url, opts={}){
+  try {
+    const r = await fetch(url, opts);
+    const txt = await r.text();
+    try { return JSON.parse(txt); }
+    catch { return { error: `Respuesta invalida del servidor (HTTP ${r.status})` }; }
+  } catch (e) {
+    return { error: 'Error de red: ' + e.message };
+  }
+}
 
 function verTab(id, title, btn){
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -394,16 +414,23 @@ function calcularPrecio(){
   document.getElementById('cNetoCop').textContent = '$' + cop.toLocaleString('es-CO') + ' COP';
 }
 
-async function toggleSniper(){
-  const r = await fetch('/api/sniper_toggle', { method:'POST' });
-  const d = await r.json();
-  toast(d.sniper_on ? '🎯 Auto-Sniper ACTIVADO en segundo plano' : '⏹️ Auto-Sniper detenido');
-  await cargarDatos();
+function marcarDirty(id){
+  DIRTY_LEADS.add(id);
+  const row = document.getElementById('row_' + id);
+  if(row) row.classList.add('dirty');
 }
 
-async function cargarDatos(){
-  const r = await fetch('/api/data');
-  DATA = await r.json();
+async function toggleSniper(){
+  const d = await apiJson('/api/sniper_toggle', { method:'POST' });
+  if(d.error) return toast('❌ ' + d.error);
+  toast(d.sniper_on ? '🎯 Auto-Sniper ACTIVADO en segundo plano' : '⏹️ Auto-Sniper detenido');
+  await cargarDatos(false);
+}
+
+async function cargarDatos(forzarTabla=false){
+  const d = await apiJson('/api/data');
+  if(d.error) return;
+  DATA = d;
   document.getElementById('kUsd').textContent = '$' + Number(DATA.kpis.usd || 0).toFixed(2);
   document.getElementById('kLeads').textContent = DATA.kpis.leads_total;
   document.getElementById('kGanados').textContent = DATA.kpis.ganados;
@@ -421,8 +448,18 @@ async function cargarDatos(){
 
   const st = document.getElementById('scanStatus');
   if(DATA.scan.running){ st.textContent = '⏳ Escaneando 16 fuentes en segundo plano...'; }
+  else if(DIRTY_LEADS.size > 0){ st.textContent = `✏️ Tienes ${DIRTY_LEADS.size} fila(s) sin guardar (auto-refresco pausado)`; }
   else if(DATA.scan.last_result){ const lr = DATA.scan.last_result; st.textContent = `✅ Ultimo barrido: ${lr.alertas} alertas | ${lr.descartados} filtrados (${lr.segundos}s)`; }
-  renderTabla();
+
+  if(DATA.logs && DATA.logs.length){
+    document.getElementById('liveLogs').textContent = DATA.logs.join('\n');
+  }
+
+  const editandoTabla = document.activeElement && document.activeElement.closest('#tbodyLeads');
+  if(forzarTabla){ DIRTY_LEADS.clear(); }
+  if(forzarTabla || (!editandoTabla && DIRTY_LEADS.size === 0)){
+    renderTabla();
+  }
   renderAnalytics();
 }
 
@@ -434,7 +471,7 @@ function renderTabla(){
   const tb = document.getElementById('tbodyLeads');
   if(!filtrados.length){ tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:28px;">Sin leads para este filtro. Haz clic en "Escanear Ahora".</td></tr>'; return; }
   tb.innerHTML = filtrados.map(l => `
-    <tr>
+    <tr id="row_${l.id}">
       <td><b>#${l.id}</b></td>
       <td><span class="score ${l.score>=8?'s-hi':'s-mid'}">${l.score}/10</span></td>
       <td><div>${esc(l.fuente)}</div><div class="meta">${esc(l.categoria)}</div></td>
@@ -445,12 +482,12 @@ function renderTabla(){
       </td>
       <td>${esc(l.presupuesto)}</td>
       <td>
-        <select id="est_${l.id}">
+        <select id="est_${l.id}" onchange="marcarDirty(${l.id})">
           ${['nuevo','contactado','negociando','ganado','descartado'].map(o => `<option value="${o}" ${l.estado===o?'selected':''}>${o}</option>`).join('')}
         </select>
       </td>
-      <td><input class="usd-in" type="number" step="1" id="usd_${l.id}" value="${l.ganancia_usd || 0}"></td>
-      <td><input class="note-in" type="text" id="not_${l.id}" value="${esc(l.notas || '')}" placeholder="Nota..."></td>
+      <td><input class="usd-in" type="number" step="1" id="usd_${l.id}" value="${l.ganancia_usd || 0}" oninput="marcarDirty(${l.id})"></td>
+      <td><input class="note-in" type="text" id="not_${l.id}" value="${esc(l.notas || '')}" placeholder="Nota..." oninput="marcarDirty(${l.id})"></td>
       <td style="white-space:nowrap;">
         <button class="success sm" onclick="guardarLead(${l.id})" title="Guardar">💾</button>
         <button class="purple sm" onclick="abrirCopilotoLead(${l.id})" title="Copiloto IA">🤖</button>
@@ -492,23 +529,29 @@ async function guardarLead(id){
   const rawUsd = document.getElementById('usd_'+id).value;
   const usd = rawUsd === '' ? 0 : (parseFloat(rawUsd) || 0);
   const notas = document.getElementById('not_'+id).value || '';
-  await fetch('/api/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, estado, usd, notas}) });
+  const d = await apiJson('/api/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, estado, usd, notas}) });
+  if(d.error) return toast('❌ ' + d.error);
+  DIRTY_LEADS.delete(id);
+  const row = document.getElementById('row_' + id);
+  if(row) row.classList.remove('dirty');
   toast(`✅ Lead #${id} guardado`);
-  await cargarDatos();
+  await cargarDatos(DIRTY_LEADS.size === 0);
 }
 
 async function borrarLead(id){
   if(!confirm(`Eliminar el lead #${id} de tu CRM?`)) return;
-  await fetch('/api/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+  const d = await apiJson('/api/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+  if(d.error) return toast('❌ ' + d.error);
+  DIRTY_LEADS.delete(id);
   toast(`🗑️ Lead #${id} eliminado`);
-  await cargarDatos();
+  await cargarDatos(true);
 }
 
 async function lanzarEscaneo(){
   document.getElementById('scanStatus').textContent = '⏳ Iniciando escaneo TITAN...';
   toast('🚀 Escaneo de 16 fuentes iniciado');
-  await fetch('/api/scan', { method:'POST' });
-  setTimeout(cargarDatos, 2000);
+  await apiJson('/api/scan', { method:'POST' });
+  setTimeout(() => cargarDatos(false), 2000);
 }
 
 function renderBloqueCopiloto(res){
@@ -530,26 +573,29 @@ async function abrirCopilotoLead(id){
   document.getElementById('modalTitle').textContent = '🤖 Copiloto TITAN — Lead #' + id;
   document.getElementById('modalBody').innerHTML = '⏳ Analizando post y generando Pitch A/B + Codigo Python...';
   document.getElementById('modalBg').classList.add('open');
-  const r = await fetch('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada: '#' + id}) });
-  document.getElementById('modalBody').innerHTML = renderBloqueCopiloto(await r.json());
+  const d = await apiJson('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada: '#' + id}) });
+  document.getElementById('modalBody').innerHTML = renderBloqueCopiloto(d);
 }
 
-async function correrCopilotoWeb(){
+async function correrCopilotoWeb(btn){
   const entrada = document.getElementById('aiOferta').value.trim();
   if(!entrada) return toast('⚠️ Pega un link, #ID o texto primero');
+  btn.disabled = true;
   document.getElementById('aiResCopiloto').innerHTML = '⏳ Generando estrategia, pitches y codigo...';
-  const r = await fetch('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada}) });
-  document.getElementById('aiResCopiloto').innerHTML = renderBloqueCopiloto(await r.json());
+  const d = await apiJson('/api/copiloto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entrada}) });
+  document.getElementById('aiResCopiloto').innerHTML = renderBloqueCopiloto(d);
+  btn.disabled = false;
 }
 
-async function correrNegociadorWeb(){
+async function correrNegociadorWeb(btn){
   const ctx = document.getElementById('negCtx').value.trim();
   const msg = document.getElementById('negMsg').value.trim();
   if(!msg) return toast('⚠️ Escribe lo que te dijo el cliente');
+  btn.disabled = true;
   document.getElementById('aiResNeg').innerHTML = '⏳ Calculando contraofertas...';
-  const r = await fetch('/api/negociar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ctx, msg}) });
-  const d = await r.json();
-  if(d.error){ document.getElementById('aiResNeg').innerHTML = esc(d.error); return; }
+  const d = await apiJson('/api/negociar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ctx, msg}) });
+  btn.disabled = false;
+  if(d.error){ document.getElementById('aiResNeg').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
   const idF = regClip(d.firme), idFl = regClip(d.flexible);
   document.getElementById('aiResNeg').innerHTML = `
     <div class="field"><label>Lectura Tactica</label><div class="prebox">${esc(d.consejo)}</div></div>
@@ -558,13 +604,14 @@ async function correrNegociadorWeb(){
   `;
 }
 
-async function generarPostWeb(){
+async function generarPostWeb(btn){
   const sub = document.getElementById('mktSub').value;
   const enfoque = document.getElementById('mktEnf').value.trim();
+  btn.disabled = true;
   document.getElementById('resMktPost').innerHTML = '⏳ Redactando post magnetico...';
-  const r = await fetch('/api/mkt_post', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sub, enfoque}) });
-  const d = await r.json();
-  if(d.error){ document.getElementById('resMktPost').innerHTML = esc(d.error); return; }
+  const d = await apiJson('/api/mkt_post', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sub, enfoque}) });
+  btn.disabled = false;
+  if(d.error){ document.getElementById('resMktPost').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
   const idT = regClip(d.titulo), idC = regClip(d.cuerpo);
   document.getElementById('resMktPost').innerHTML = `
     <div class="field"><label>Titulo <button class="sm" onclick="copyId('${idT}')">Copiar</button></label><div class="prebox">${esc(d.titulo)}</div></div>
@@ -572,11 +619,12 @@ async function generarPostWeb(){
   `;
 }
 
-async function generarBiosWeb(){
+async function generarBiosWeb(btn){
+  btn.disabled = true;
   document.getElementById('resMktBios').innerHTML = '⏳ Generando 3 bios...';
-  const r = await fetch('/api/mkt_bios', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
-  const d = await r.json();
-  if(d.error){ document.getElementById('resMktBios').innerHTML = esc(d.error); return; }
+  const d = await apiJson('/api/mkt_bios', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+  btn.disabled = false;
+  if(d.error){ document.getElementById('resMktBios').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
   const idR = regClip(d.reddit), idG = regClip(d.github), idW = regClip(d.whop);
   document.getElementById('resMktBios').innerHTML = `
     <div class="field"><label>Reddit Bio <button class="sm" onclick="copyId('${idR}')">Copiar</button></label><div class="prebox">${esc(d.reddit)}</div></div>
@@ -585,11 +633,12 @@ async function generarBiosWeb(){
   `;
 }
 
-async function generarPortafolioWeb(){
+async function generarPortafolioWeb(btn){
+  btn.disabled = true;
   document.getElementById('resMktBios').innerHTML = '⏳ Construyendo PORTAFOLIO.md profesional...';
-  const r = await fetch('/api/mkt_portfolio', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
-  const d = await r.json();
-  if(d.error){ document.getElementById('resMktBios').innerHTML = esc(d.error); return; }
+  const d = await apiJson('/api/mkt_portfolio', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+  btn.disabled = false;
+  if(d.error){ document.getElementById('resMktBios').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
   const idP = regClip(d.markdown);
   document.getElementById('resMktBios').innerHTML = `
     <div class="meta" style="color:var(--green);margin-bottom:8px;">✅ Guardado en PORTAFOLIO.md</div>
@@ -598,12 +647,13 @@ async function generarPortafolioWeb(){
   toast('📂 PORTAFOLIO.md creado');
 }
 
-async function empaquetarWhopWeb(){
+async function empaquetarWhopWeb(btn){
   const nombre = document.getElementById('whopNom').value.trim() || 'ZeroTouch Automation Tool';
   const ruta = document.getElementById('whopRuta').value.trim();
+  btn.disabled = true;
   document.getElementById('resWhop').innerHTML = '⏳ Refactorizando codigo y armando .ZIP comercial...';
-  const r = await fetch('/api/whop_pack', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nombre, ruta}) });
-  const d = await r.json();
+  const d = await apiJson('/api/whop_pack', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nombre, ruta}) });
+  btn.disabled = false;
   if(d.error){ document.getElementById('resWhop').innerHTML = `<div style="color:var(--red);">${esc(d.error)}</div>`; return; }
   const idW = regClip(d.whop_copy);
   document.getElementById('resWhop').innerHTML = `
@@ -627,8 +677,8 @@ async function generarFacturaWeb(){
 }
 
 async function cargarConfigWeb(){
-  const r = await fetch('/api/config');
-  const c = await r.json();
+  const c = await apiJson('/api/config');
+  if(c.error) return;
   document.getElementById('cMarca').value = c.nombre_marca || '';
   document.getElementById('cEsp').value = c.especialidad || '';
   document.getElementById('cPagos').value = c.metodos_pago || '';
@@ -636,14 +686,21 @@ async function cargarConfigWeb(){
   document.getElementById('cGh').value = c.github_url || '';
   document.getElementById('cWhop').value = c.whop_url || '';
   document.getElementById('cTarifa').value = c.tarifa_hora_usd || 25;
+  document.getElementById('cTrm').value = c.trm_cop || 4200;
   document.getElementById('cScore').value = c.score_minimo || 6;
   document.getElementById('cSniper').value = c.intervalo_sniper_seg || 70;
+  document.getElementById('cMaxHrs').value = c.max_horas_post || 12;
+  const bl = Array.isArray(c.palabras_extra_blacklist) ? c.palabras_extra_blacklist.join(', ') : (c.palabras_extra_blacklist || '');
+  document.getElementById('cBlack').value = bl;
   document.getElementById('cAdmin').value = c.telegram_admin_id || '';
   document.getElementById('calcRate').value = c.tarifa_hora_usd || 25;
   document.getElementById('calcTrm').value = c.trm_cop || 4200;
+  calcularPrecio();
 }
 
 async function guardarConfigWeb(){
+  const rawBl = document.getElementById('cBlack').value || '';
+  const listaBl = rawBl.split(',').map(s => s.trim()).filter(Boolean);
   const payload = {
     nombre_marca: document.getElementById('cMarca').value,
     especialidad: document.getElementById('cEsp').value,
@@ -652,29 +709,45 @@ async function guardarConfigWeb(){
     github_url: document.getElementById('cGh').value,
     whop_url: document.getElementById('cWhop').value,
     tarifa_hora_usd: parseInt(document.getElementById('cTarifa').value || '25', 10),
-    score_minimo: parseInt(document.getElementById('cScore').value || '6', 10),
+    trm_cop: parseInt(document.getElementById('cTrm').value || '4200', 10),
+    score_minimo: Math.max(1, Math.min(10, parseInt(document.getElementById('cScore').value || '6', 10))),
     intervalo_sniper_seg: Math.max(45, parseInt(document.getElementById('cSniper').value || '70', 10)),
+    max_horas_post: Math.max(1, parseInt(document.getElementById('cMaxHrs').value || '12', 10)),
+    palabras_extra_blacklist: listaBl,
     telegram_admin_id: document.getElementById('cAdmin').value.trim()
   };
-  await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  const d = await apiJson('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if(d.error) return toast('❌ ' + d.error);
+  document.getElementById('calcRate').value = payload.tarifa_hora_usd;
+  document.getElementById('calcTrm').value = payload.trm_cop;
+  calcularPrecio();
   toast('💾 Configuracion guardada');
 }
 
-async function correrDiagWeb(){
+async function correrDiagWeb(btn){
+  btn.disabled = true;
   document.getElementById('resDiag').textContent = '⏳ Probando Reddit, Telegram y Gemini...';
-  const r = await fetch('/api/diagnostico');
-  const d = await r.json();
-  document.getElementById('resDiag').textContent = d.reporte;
+  const d = await apiJson('/api/diagnostico');
+  document.getElementById('resDiag').textContent = d.reporte || d.error;
+  btn.disabled = false;
+}
+
+async function probarTelegramWeb(btn){
+  btn.disabled = true;
+  const d = await apiJson('/api/test_tg', { method:'POST' });
+  btn.disabled = false;
+  toast(d.ok ? '📨 Alerta de prueba enviada a Telegram' : '❌ Fallo envio a Telegram');
+  cargarDatos(false);
 }
 
 async function hacerBackupWeb(){
-  const r = await fetch('/api/backup', { method:'POST' });
-  const d = await r.json();
+  const d = await apiJson('/api/backup', { method:'POST' });
   toast(d.path ? '💾 Backup creado en backups/' : '⚠️ No hay DB todavia');
 }
 
-cargarDatos();
-setInterval(cargarDatos, 15000);
+cargarConfigWeb();
+cargarDatos(true);
+setInterval(() => cargarDatos(false), 15000);
 </script>
 </body>
 </html>
@@ -686,18 +759,19 @@ def correr_scan_bg() -> None:
     SCAN_STATE["running"] = True
     try:
         SCAN_STATE["last_result"] = ejecutar_ciclo(modo_sonido=True)
+    except Exception as e:
+        log_evento(f"Error en escaneo: {e}")
     finally:
         SCAN_STATE["running"] = False
         SCAN_LOCK.release()
 
-def loop_sniper_web() -> None:
-    while not SNIPER_STOP.is_set():
+def loop_sniper_web(stop_evt: threading.Event) -> None:
+    while not stop_evt.is_set():
         SCAN_STATE["sniper_ciclos"] += 1
         correr_scan_bg()
         intervalo = max(45, safe_int(cargar_config().get("intervalo_sniper_seg", 70), 70))
-        if SNIPER_STOP.wait(intervalo):
+        if stop_evt.wait(intervalo):
             break
-    SCAN_STATE["sniper_on"] = False
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -710,6 +784,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_json(self, obj: dict, code: int = 200) -> None:
+        self._send(code, "application/json; charset=utf-8", json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
     def _json_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
         if length <= 0:
@@ -720,242 +797,254 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self) -> None:
-        if self.path == "/":
-            self._send(200, "text/html; charset=utf-8", HTML_DASHBOARD.encode("utf-8"))
-        elif self.path == "/api/config":
-            self._send(200, "application/json; charset=utf-8", json.dumps(cargar_config()).encode("utf-8"))
-        elif self.path == "/api/diagnostico":
-            key = os.getenv("GEMINI_API_KEY_FREE")
-            tg_tok = os.getenv("TELEGRAM_TOKEN")
-            tg_id = os.getenv("TELEGRAM_CHAT_ID")
-            lineas = [
-                f"1. Archivo .env      : {'OK' if os.path.exists(os.path.join(ROOT_DIR, '.env')) else 'FALTA'}",
-                f"2. config.json       : {'OK' if os.path.exists(os.path.join(ROOT_DIR, 'config.json')) else 'Default'}",
-                f"3. TELEGRAM_CHAT_ID  : {tg_id or 'FALTA'}",
-            ]
-            if tg_tok:
-                try:
-                    rt = SESSION.get(f"https://api.telegram.org/bot{tg_tok}/getMe", timeout=6)
-                    lineas.append(f"4. Telegram API      : {'OK (@' + rt.json()['result']['username'] + ')' if rt.status_code == 200 else 'Error ' + str(rt.status_code)}")
-                except Exception as e:
-                    lineas.append(f"4. Telegram API      : Error ({e})")
-            try:
-                rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v11.0"}, timeout=6)
-                lineas.append(f"5. Reddit API        : {'OK (JSON en vivo)' if rr.status_code == 200 else 'Fallback XML Nativo (HTTP ' + str(rr.status_code) + ')'}")
-            except Exception as e:
-                lineas.append(f"5. Reddit API        : Error ({e})")
-            resp = generar_texto_ia("Responde solo OK", temperatura=0.0, timeout=10) if key else None
-            lineas.append(f"6. Gemini API        : {'OK' if resp else 'SIN RESPUESTA'}")
-            self._send(200, "application/json; charset=utf-8", json.dumps({"reporte": "\n".join(lineas)}).encode("utf-8"))
-        elif self.path == "/api/data":
-            conn = preparar_db()
-            try:
-                rows = conn.execute(
-                    "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, link, estado, ganancia_usd, notas FROM leads ORDER BY id DESC LIMIT 150"
-                ).fetchall()
-                leads = [
-                    {
-                        "id": r[0], "fecha": r[1], "fuente": r[2], "autor": r[3], "titulo": r[4],
-                        "categoria": r[5], "presupuesto": r[6], "score": r[7], "competencia": r[8],
-                        "confianza": r[9], "prioridad_tag": r[10], "link": r[11], "estado": r[12],
-                        "ganancia_usd": r[13], "notas": r[14] or "",
-                    }
-                    for r in rows
+        try:
+            if self.path == "/":
+                self._send(200, "text/html; charset=utf-8", HTML_DASHBOARD.encode("utf-8"))
+            elif self.path == "/api/config":
+                self._send_json(cargar_config())
+            elif self.path == "/api/diagnostico":
+                key = os.getenv("GEMINI_API_KEY_FREE")
+                tg_tok = os.getenv("TELEGRAM_TOKEN")
+                tg_id = os.getenv("TELEGRAM_CHAT_ID")
+                lineas = [
+                    f"1. Archivo .env      : {'OK' if os.path.exists(os.path.join(ROOT_DIR, '.env')) else 'FALTA'}",
+                    f"2. config.json       : {'OK' if os.path.exists(os.path.join(ROOT_DIR, 'config.json')) else 'Default'}",
+                    f"3. TELEGRAM_CHAT_ID  : {tg_id or 'FALTA'}",
                 ]
-                leads_total = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-                usd = conn.execute("SELECT COALESCE(SUM(ganancia_usd), 0) FROM leads WHERE estado = 'ganado'").fetchone()[0]
-                ganados = conn.execute("SELECT COUNT(*) FROM leads WHERE estado = 'ganado'").fetchone()[0]
-                activos_neg = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('contactado','negociando','ganado')").fetchone()[0]
-                tasa = round((ganados / activos_neg) * 100) if activos_neg > 0 else 0
-                st_row = conn.execute("SELECT COALESCE(SUM(descartados_local), 0), COALESCE(SUM(tokens_est_usados), 0), COALESCE(SUM(tokens_est_ahorrados), 0) FROM stats_diarias").fetchone()
-                por_fuente = conn.execute("SELECT fuente, COUNT(*) FROM leads GROUP BY fuente ORDER BY COUNT(*) DESC LIMIT 7").fetchall()
-                embudo = conn.execute("SELECT estado, COUNT(*) FROM leads GROUP BY estado ORDER BY COUNT(*) DESC").fetchall()
-                usd_cat = conn.execute("SELECT categoria, ROUND(SUM(ganancia_usd), 2) FROM leads WHERE estado = 'ganado' GROUP BY categoria ORDER BY SUM(ganancia_usd) DESC LIMIT 6").fetchall()
-                payload = {
-                    "leads": leads,
-                    "kpis": {
-                        "usd": usd, "leads_total": leads_total, "ganados": ganados, "tasa_cierre": tasa,
-                        "descartados": st_row[0], "tok_usados": st_row[1], "tok_ahorrados": st_row[2],
-                    },
-                    "analytics": {"por_fuente": por_fuente, "embudo": embudo, "usd_categoria": usd_cat},
-                    "scan": SCAN_STATE,
-                }
-                self._send(200, "application/json; charset=utf-8", json.dumps(payload).encode("utf-8"))
-            finally:
-                conn.close()
-        elif self.path == "/api/export":
-            conn = preparar_db()
-            try:
-                rows = conn.execute(
-                    "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, estado, ganancia_usd, notas, link FROM leads ORDER BY id DESC"
-                ).fetchall()
-                buf = io.StringIO()
-                w = csv.writer(buf)
-                w.writerow(["ID", "Fecha", "Fuente", "Autor", "Titulo", "Categoria", "Presupuesto", "Score", "Competencia", "Confianza", "Tag", "Estado", "Ganancia_USD", "Notas", "Link"])
-                w.writerows(rows)
-                data = ("\ufeff" + buf.getvalue()).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Disposition", f'attachment; filename="crm_titan_{datetime.now().strftime("%Y%m%d")}.csv"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            finally:
-                conn.close()
-        else:
-            self._send(404, "text/plain", b"Not Found")
+                if tg_tok:
+                    try:
+                        rt = SESSION.get(f"https://api.telegram.org/bot{tg_tok}/getMe", timeout=6)
+                        lineas.append(f"4. Telegram API      : {'OK (@' + rt.json()['result']['username'] + ')' if rt.status_code == 200 else 'Error ' + str(rt.status_code)}")
+                    except Exception as e:
+                        lineas.append(f"4. Telegram API      : Error ({e})")
+                else:
+                    lineas.append("4. Telegram API      : FALTA TELEGRAM_TOKEN")
+                try:
+                    rr = SESSION.get("https://www.reddit.com/r/forhire/new.json?limit=1", headers={"User-Agent": "python:zerotouch-diag:v11.5"}, timeout=6)
+                    lineas.append(f"5. Reddit API        : {'OK (JSON en vivo)' if rr.status_code == 200 else 'Fallback XML Nativo (HTTP ' + str(rr.status_code) + ')'}")
+                except Exception as e:
+                    lineas.append(f"5. Reddit API        : Error ({e})")
+                resp = generar_texto_ia("Responde solo OK", temperatura=0.0, timeout=10) if key else None
+                lineas.append(f"6. Gemini API        : {'OK' if resp else 'SIN RESPUESTA'}")
+                self._send_json({"reporte": "\n".join(lineas)})
+            elif self.path == "/api/data":
+                conn = preparar_db()
+                try:
+                    rows = conn.execute(
+                        "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, link, estado, ganancia_usd, notas FROM leads ORDER BY id DESC LIMIT 150"
+                    ).fetchall()
+                    leads = [
+                        {
+                            "id": r[0], "fecha": r[1], "fuente": r[2], "autor": r[3], "titulo": r[4],
+                            "categoria": r[5], "presupuesto": r[6], "score": r[7], "competencia": r[8],
+                            "confianza": r[9], "prioridad_tag": r[10], "link": r[11], "estado": r[12],
+                            "ganancia_usd": r[13], "notas": r[14] or "",
+                        }
+                        for r in rows
+                    ]
+                    leads_total = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+                    usd = conn.execute("SELECT COALESCE(SUM(ganancia_usd), 0) FROM leads WHERE estado = 'ganado'").fetchone()[0]
+                    ganados = conn.execute("SELECT COUNT(*) FROM leads WHERE estado = 'ganado'").fetchone()[0]
+                    activos_neg = conn.execute("SELECT COUNT(*) FROM leads WHERE estado IN ('contactado','negociando','ganado')").fetchone()[0]
+                    tasa = round((ganados / activos_neg) * 100) if activos_neg > 0 else 0
+                    st_row = conn.execute("SELECT COALESCE(SUM(descartados_local), 0), COALESCE(SUM(tokens_est_usados), 0), COALESCE(SUM(tokens_est_ahorrados), 0) FROM stats_diarias").fetchone()
+                    por_fuente = conn.execute("SELECT fuente, COUNT(*) FROM leads GROUP BY fuente ORDER BY COUNT(*) DESC LIMIT 7").fetchall()
+                    embudo = conn.execute("SELECT estado, COUNT(*) FROM leads GROUP BY estado ORDER BY COUNT(*) DESC").fetchall()
+                    usd_cat = conn.execute("SELECT categoria, ROUND(SUM(ganancia_usd), 2) FROM leads WHERE estado = 'ganado' GROUP BY categoria ORDER BY SUM(ganancia_usd) DESC LIMIT 6").fetchall()
+                    self._send_json({
+                        "leads": leads,
+                        "kpis": {
+                            "usd": usd, "leads_total": leads_total, "ganados": ganados, "tasa_cierre": tasa,
+                            "descartados": st_row[0], "tok_usados": st_row[1], "tok_ahorrados": st_row[2],
+                        },
+                        "analytics": {"por_fuente": por_fuente, "embudo": embudo, "usd_categoria": usd_cat},
+                        "scan": SCAN_STATE,
+                        "logs": obtener_logs(40),
+                    })
+                finally:
+                    conn.close()
+            elif self.path == "/api/export":
+                conn = preparar_db()
+                try:
+                    rows = conn.execute(
+                        "SELECT id, fecha, fuente, autor, titulo, categoria, presupuesto, score, competencia, confianza, prioridad_tag, estado, ganancia_usd, notas, link FROM leads ORDER BY id DESC"
+                    ).fetchall()
+                    buf = io.StringIO()
+                    w = csv.writer(buf)
+                    w.writerow(["ID", "Fecha", "Fuente", "Autor", "Titulo", "Categoria", "Presupuesto", "Score", "Competencia", "Confianza", "Tag", "Estado", "Ganancia_USD", "Notas", "Link"])
+                    w.writerows(rows)
+                    data = ("\ufeff" + buf.getvalue()).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    self.send_header("Content-Disposition", f'attachment; filename="crm_titan_{datetime.now().strftime("%Y%m%d")}.csv"')
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                finally:
+                    conn.close()
+            else:
+                self._send(404, "text/plain", b"Not Found")
+        except Exception as e:
+            log_evento(f"Error GET {self.path}: {e}")
+            self._send_json({"error": str(e)}, code=500)
 
     def do_POST(self) -> None:
-        data = self._json_body()
-        if self.path == "/api/update":
-            conn = preparar_db()
-            try:
-                conn.execute(
-                    "UPDATE leads SET estado = ?, ganancia_usd = ?, notas = ? WHERE id = ?",
-                    (
-                        str(data.get("estado", "nuevo")),
-                        safe_float(data.get("usd", 0), 0.0),
-                        str(data.get("notas", ""))[:300],
-                        safe_int(data.get("id", 0), 0),
-                    ),
+        global CURRENT_SNIPER_STOP
+        try:
+            data = self._json_body()
+            if self.path == "/api/update":
+                est = str(data.get("estado", "nuevo")).strip().lower()
+                conn = preparar_db()
+                try:
+                    conn.execute(
+                        """
+                        UPDATE leads
+                        SET estado = ?,
+                            ganancia_usd = ?,
+                            notas = ?,
+                            contactado_ts = CASE WHEN ? = 'contactado' AND estado != 'contactado' THEN CURRENT_TIMESTAMP ELSE contactado_ts END,
+                            followup_enviado = CASE WHEN ? = 'contactado' AND estado != 'contactado' THEN 0 ELSE followup_enviado END
+                        WHERE id = ?
+                        """,
+                        (
+                            est,
+                            safe_float(data.get("usd", 0), 0.0),
+                            str(data.get("notas", ""))[:300],
+                            est,
+                            est,
+                            safe_int(data.get("id", 0), 0),
+                        ),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                self._send_json({"ok": True})
+            elif self.path == "/api/delete":
+                conn = preparar_db()
+                try:
+                    conn.execute("DELETE FROM leads WHERE id = ?", (safe_int(data.get("id", 0), 0),))
+                    conn.commit()
+                finally:
+                    conn.close()
+                self._send_json({"ok": True})
+            elif self.path == "/api/scan":
+                threading.Thread(target=correr_scan_bg, daemon=True).start()
+                self._send_json({"started": True})
+            elif self.path == "/api/sniper_toggle":
+                with SNIPER_LOCK:
+                    if SCAN_STATE["sniper_on"]:
+                        if CURRENT_SNIPER_STOP is not None:
+                            CURRENT_SNIPER_STOP.set()
+                        CURRENT_SNIPER_STOP = None
+                        SCAN_STATE["sniper_on"] = False
+                        log_evento("Auto-Sniper Web detenido")
+                    else:
+                        evt = threading.Event()
+                        CURRENT_SNIPER_STOP = evt
+                        SCAN_STATE["sniper_on"] = True
+                        log_evento("Auto-Sniper Web activado")
+                        threading.Thread(target=loop_sniper_web, args=(evt,), daemon=True).start()
+                self._send_json({"sniper_on": SCAN_STATE["sniper_on"]})
+            elif self.path == "/api/test_tg":
+                cfg_t = cargar_config()
+                prueba = {
+                    "fuente": "r/forhire",
+                    "autor": "spez",
+                    "titulo": "[Hiring] Test Alert TITAN v11.5 ($150 USD)",
+                    "texto": "Need a Python script to scrape product prices into CSV.",
+                    "link": "https://www.reddit.com/r/forhire/",
+                    "comp_txt": "🎯 SANGRE FRESCA (1m | 0 com.)",
+                    "prioridad_tag": "🚨 TEST",
+                    "origen": "reddit",
+                }
+                _, env, _ = evaluar_y_enviar(prueba, cfg_t, modo_sonido=True)
+                self._send_json({"ok": env})
+            elif self.path == "/api/backup":
+                dst = crear_backup_rotativo()
+                self._send_json({"path": dst})
+            elif self.path == "/api/config":
+                cfg = cargar_config()
+                cfg.update(data)
+                guardar_config(cfg)
+                log_evento("Configuracion actualizada desde Web OS")
+                self._send_json({"ok": True})
+            elif self.path == "/api/copiloto":
+                entrada = str(data.get("entrada", "")).strip()
+                autor = titulo = ""
+                if entrada.startswith("#") and entrada[1:].isdigit():
+                    oferta, autor, titulo = cargar_desde_crm(int(entrada[1:]))
+                elif entrada.startswith("http") and ("reddit.com" in entrada or "redd.it" in entrada):
+                    oferta, autor, titulo = descargar_post_reddit(entrada)
+                else:
+                    oferta = entrada
+                if not oferta:
+                    self._send_json({"error": "No se pudo leer el post o ID"})
+                    return
+                res = analizar_oferta_completo(oferta, autor=autor, titulo=titulo, guardar_archivos=True)
+                self._send_json(res or {"error": "IA no respondio en este intento"})
+            elif self.path == "/api/negociar":
+                res = responder_objecion_ia(str(data.get("ctx", "")), str(data.get("msg", "")))
+                self._send_json(res or {"error": "IA no respondio"})
+            elif self.path == "/api/mkt_post":
+                cfg = cargar_config()
+                sub = str(data.get("sub", "r/forhire"))
+                enf = str(data.get("enfoque", "")).strip() or cfg.get("especialidad")
+                prompt = (
+                    f"Crea una publicacion persuasiva en ingles para {sub} que atraiga clientes freelance.\n"
+                    f"Especialidad: {enf}\nPagos: {cfg.get('metodos_pago')}\nGitHub: {cfg.get('github_url')}\n"
+                    "Responde UNICAMENTE con <TITULO>...</TITULO> y <CUERPO>...</CUERPO>."
                 )
-                conn.commit()
-            finally:
-                conn.close()
-            self._send(200, "application/json", b'{"ok": true}')
-        elif self.path == "/api/delete":
-            conn = preparar_db()
-            try:
-                conn.execute("DELETE FROM leads WHERE id = ?", (safe_int(data.get("id", 0), 0),))
-                conn.commit()
-            finally:
-                conn.close()
-            self._send(200, "application/json", b'{"ok": true}')
-        elif self.path == "/api/scan":
-            threading.Thread(target=correr_scan_bg, daemon=True).start()
-            self._send(200, "application/json", b'{"started": true}')
-        elif self.path == "/api/sniper_toggle":
-            if SCAN_STATE["sniper_on"]:
-                SNIPER_STOP.set()
-                SCAN_STATE["sniper_on"] = False
+                txt = generar_texto_ia(prompt, temperatura=0.4)
+                out = {"titulo": extraer_etiqueta(txt, "TITULO"), "cuerpo": extraer_etiqueta(txt, "CUERPO")} if txt else {"error": "IA no respondio"}
+                self._send_json(out)
+            elif self.path == "/api/mkt_bios":
+                cfg = cargar_config()
+                prompt = (
+                    f"Crea 3 bios profesionales en ingles para un dev freelance ({cfg.get('especialidad')}).\n"
+                    "Responde UNICAMENTE con <REDDIT_BIO>...</REDDIT_BIO>, <GITHUB_BIO>...</GITHUB_BIO> y <WHOP_BIO>...</WHOP_BIO>."
+                )
+                txt = generar_texto_ia(prompt, temperatura=0.4)
+                out = {"reddit": extraer_etiqueta(txt, "REDDIT_BIO"), "github": extraer_etiqueta(txt, "GITHUB_BIO"), "whop": extraer_etiqueta(txt, "WHOP_BIO")} if txt else {"error": "IA no respondio"}
+                self._send_json(out)
+            elif self.path == "/api/mkt_portfolio":
+                cfg = cargar_config()
+                conn = preparar_db()
+                try:
+                    ganados = conn.execute("SELECT titulo, categoria FROM leads WHERE estado = 'ganado' ORDER BY id DESC LIMIT 6").fetchall()
+                finally:
+                    conn.close()
+                prompt = (
+                    "Crea un archivo PORTAFOLIO.md profesional y directo en ingles para GitHub y clientes freelance.\n"
+                    f"Marca: {cfg.get('nombre_marca')}\nEspecialidad: {cfg.get('especialidad')}\n"
+                    f"Proyectos ganados: {ganados}\nPagos: {cfg.get('metodos_pago')}\n"
+                    "Incluye resumen, stack tecnico, 3 casos de estudio (ZeroTouch 24/7 Lead Radar, Python Scrapers, Telegram Bots) y CTA.\n"
+                    "Devuelve UNICAMENTE el contenido dentro de <PORTAFOLIO>...</PORTAFOLIO>."
+                )
+                txt = generar_texto_ia(prompt, temperatura=0.35)
+                if not txt:
+                    self._send_json({"error": "IA no respondio"})
+                    return
+                md = extraer_etiqueta(txt, "PORTAFOLIO") or txt
+                with open(os.path.join(ROOT_DIR, "PORTAFOLIO.md"), "w", encoding="utf-8") as f:
+                    f.write(md)
+                self._send_json({"markdown": md})
+            elif self.path == "/api/whop_pack":
+                res = empaquetar_producto_whop(str(data.get("ruta", "")), str(data.get("nombre", "")))
+                self._send_json(res)
+            elif self.path == "/api/factura":
+                _, html_doc = crear_factura_html(
+                    str(data.get("cliente", "Client")),
+                    str(data.get("proyecto", "Custom Python Automation")),
+                    str(data.get("monto", "100")),
+                    str(data.get("tipo", "Final Payment")),
+                    incluir_contrato=True,
+                )
+                self._send(200, "text/html; charset=utf-8", html_doc.encode("utf-8"))
             else:
-                SNIPER_STOP.clear()
-                SCAN_STATE["sniper_on"] = True
-                threading.Thread(target=loop_sniper_web, daemon=True).start()
-            self._send(200, "application/json", json.dumps({"sniper_on": SCAN_STATE["sniper_on"]}).encode("utf-8"))
-        elif self.path == "/api/backup":
-            dst = crear_backup_rotativo()
-            self._send(200, "application/json", json.dumps({"path": dst}).encode("utf-8"))
-        elif self.path == "/api/config":
-            cfg = cargar_config()
-            cfg.update(data)
-            guardar_config(cfg)
-            self._send(200, "application/json", b'{"ok": true}')
-        elif self.path == "/api/copiloto":
-            entrada = str(data.get("entrada", "")).strip()
-            autor = titulo = ""
-            if entrada.startswith("#") and entrada[1:].isdigit():
-                oferta, autor, titulo = cargar_desde_crm(int(entrada[1:]))
-            elif entrada.startswith("http") and "reddit.com" in entrada:
-                oferta, autor, titulo = descargar_post_reddit(entrada)
-            else:
-                oferta = entrada
-            if not oferta:
-                self._send(200, "application/json", json.dumps({"error": "No se pudo leer el post o ID"}).encode("utf-8"))
-                return
-            res = analizar_oferta_completo(oferta, autor=autor, titulo=titulo, guardar_archivos=True)
-            self._send(200, "application/json; charset=utf-8", json.dumps(res or {"error": "IA no respondio"}).encode("utf-8"))
-        elif self.path == "/api/negociar":
-            res = responder_objecion_ia(str(data.get("ctx", "")), str(data.get("msg", "")))
-            self._send(200, "application/json; charset=utf-8", json.dumps(res or {"error": "IA no respondio"}).encode("utf-8"))
-        elif self.path == "/api/mkt_post":
-            cfg = cargar_config()
-            sub = str(data.get("sub", "r/forhire"))
-            enf = str(data.get("enfoque", "")).strip() or cfg.get("especialidad")
-            prompt = (
-                f"Crea una publicacion persuasiva en ingles para {sub} que atraiga clientes freelance.\n"
-                f"Especialidad: {enf}\nPagos: {cfg.get('metodos_pago')}\nGitHub: {cfg.get('github_url')}\n"
-                "Responde UNICAMENTE con <TITULO>...</TITULO> y <CUERPO>...</CUERPO>."
-            )
-            txt = generar_texto_ia(prompt, temperatura=0.4)
-            out = {"titulo": extraer_etiqueta(txt, "TITULO"), "cuerpo": extraer_etiqueta(txt, "CUERPO")} if txt else {"error": "IA no respondio"}
-            self._send(200, "application/json; charset=utf-8", json.dumps(out).encode("utf-8"))
-        elif self.path == "/api/mkt_bios":
-            cfg = cargar_config()
-            prompt = (
-                f"Crea 3 bios profesionales en ingles para un dev freelance ({cfg.get('especialidad')}).\n"
-                "Responde UNICAMENTE con <REDDIT_BIO>...</REDDIT_BIO>, <GITHUB_BIO>...</GITHUB_BIO> y <WHOP_BIO>...</WHOP_BIO>."
-            )
-            txt = generar_texto_ia(prompt, temperatura=0.4)
-            out = {"reddit": extraer_etiqueta(txt, "REDDIT_BIO"), "github": extraer_etiqueta(txt, "GITHUB_BIO"), "whop": extraer_etiqueta(txt, "WHOP_BIO")} if txt else {"error": "IA no respondio"}
-            self._send(200, "application/json; charset=utf-8", json.dumps(out).encode("utf-8"))
-        elif self.path == "/api/mkt_portfolio":
-            cfg = cargar_config()
-            conn = preparar_db()
-            try:
-                ganados = conn.execute("SELECT titulo, categoria FROM leads WHERE estado = 'ganado' ORDER BY id DESC LIMIT 6").fetchall()
-            finally:
-                conn.close()
-            prompt = (
-                "Crea un archivo PORTAFOLIO.md profesional y directo en ingles para GitHub y clientes freelance.\n"
-                f"Marca: {cfg.get('nombre_marca')}\nEspecialidad: {cfg.get('especialidad')}\n"
-                f"Proyectos ganados: {ganados}\nPagos: {cfg.get('metodos_pago')}\n"
-                "Incluye resumen, stack tecnico, 3 casos de estudio (ZeroTouch 24/7 Lead Radar, Python Scrapers, Telegram Bots) y CTA.\n"
-                "Devuelve UNICAMENTE el contenido dentro de <PORTAFOLIO>...</PORTAFOLIO>."
-            )
-            txt = generar_texto_ia(prompt, temperatura=0.35)
-            if not txt:
-                self._send(200, "application/json", json.dumps({"error": "IA no respondio"}).encode("utf-8"))
-                return
-            md = extraer_etiqueta(txt, "PORTAFOLIO") or txt
-            with open(os.path.join(ROOT_DIR, "PORTAFOLIO.md"), "w", encoding="utf-8") as f:
-                f.write(md)
-            self._send(200, "application/json; charset=utf-8", json.dumps({"markdown": md}).encode("utf-8"))
-        elif self.path == "/api/whop_pack":
-            nombre = str(data.get("nombre", "ZeroTouch Tool")).strip()
-            ruta = str(data.get("ruta", "")).strip() or os.path.join(ROOT_DIR, "modulo_b_ejecutor", "borrador_cliente.py")
-            if not os.path.exists(ruta):
-                self._send(200, "application/json", json.dumps({"error": f"No existe el archivo: {ruta}"}).encode("utf-8"))
-                return
-            with open(ruta, "r", encoding="utf-8") as f:
-                cod_raw = f.read()
-            prompt = (
-                f"Convierte este script en producto comercial Whop llamado '{nombre}'.\n"
-                "Responde UNICAMENTE con <CODIGO_LIMPIO>, <README>, <WHOP_COPY> y <GUION_SHORT>.\n\n"
-                f"SCRIPT:\n{cod_raw}"
-            )
-            txt = generar_texto_ia(prompt, temperatura=0.25, timeout=32)
-            if not txt:
-                self._send(200, "application/json", json.dumps({"error": "IA no respondio"}).encode("utf-8"))
-                return
-            cod, _ = validar_y_reparar_python(extraer_etiqueta(txt, "CODIGO_LIMPIO"), descripcion=nombre)
-            readme = limpiar_bloque_codigo(extraer_etiqueta(txt, "README"))
-            whop = extraer_etiqueta(txt, "WHOP_COPY")
-            guion = extraer_etiqueta(txt, "GUION_SHORT")
-            todos_pip, _ = analizar_dependencias(cod)
-            carp = os.path.join(ROOT_DIR, "modulo_c_whop", "producto_listo")
-            os.makedirs(carp, exist_ok=True)
-            slug = re.sub(r"[^a-zA-Z0-9]+", "_", nombre.lower()).strip("_") or "producto"
-            launcher = "@echo off\r\npython -m pip install -r requirements.txt\r\npython main.py\r\npause\r\n"
-            for fn, ct in [("main.py", cod), ("README.md", readme), ("requirements.txt", ("\n".join(todos_pip) or "# stdlib") + "\n"), ("RUN_WINDOWS.bat", launcher), ("WHOP_LISTING.md", whop), ("GUION_SHORT.txt", guion)]:
-                with open(os.path.join(carp, fn), "w", encoding="utf-8") as f:
-                    f.write(ct)
-            zpath = os.path.join(carp, f"{slug}_whop_prime.zip")
-            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fn in ("main.py", "README.md", "requirements.txt", "RUN_WINDOWS.bat"):
-                    zf.write(os.path.join(carp, fn), arcname=fn)
-            self._send(200, "application/json; charset=utf-8", json.dumps({"zip_path": zpath, "whop_copy": whop}).encode("utf-8"))
-        elif self.path == "/api/factura":
-            _, html_doc = crear_factura_html(
-                str(data.get("cliente", "Client")),
-                str(data.get("proyecto", "Custom Python Automation")),
-                str(data.get("monto", "100")),
-                str(data.get("tipo", "Final Payment")),
-                incluir_contrato=True,
-            )
-            self._send(200, "text/html; charset=utf-8", html_doc.encode("utf-8"))
-        else:
-            self._send(404, "text/plain", b"Not Found")
+                self._send(404, "text/plain", b"Not Found")
+        except Exception as e:
+            log_evento(f"Error POST {self.path}: {e}")
+            self._send_json({"error": str(e)}, code=500)
 
 def puerto_en_uso(puerto: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -969,13 +1058,15 @@ def main() -> None:
         webbrowser.open(url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
-    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH TITAN v11.0 WEB OS: {url} ==={C.RESET}")
+    log_evento("Servidor Web TITAN v11.5 iniciado en " + url)
+    print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH TITAN v11.5 HARDENED WEB OS: {url} ==={C.RESET}")
     print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
     webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        SNIPER_STOP.set()
+        if CURRENT_SNIPER_STOP is not None:
+            CURRENT_SNIPER_STOP.set()
         print(f"\n{C.YELLOW}[*] Servidor web cerrado.{C.RESET}\n")
     finally:
         server.server_close()
