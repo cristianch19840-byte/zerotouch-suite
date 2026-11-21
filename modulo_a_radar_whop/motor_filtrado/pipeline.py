@@ -35,6 +35,17 @@ from modulo_a_radar_whop.motor_filtrado.modelos import (
 from modulo_a_radar_whop.motor_filtrado.normalizador import NormalizadorForense
 from modulo_a_radar_whop.motor_filtrado.seguridad import EscudoSeguridad
 from modulo_a_radar_whop.motor_filtrado.taxonomia import MotorTaxonomia
+from modulo_a_radar_whop.motor_filtrado.calibrador import (
+    CalibradorDinamicoAEGIS,
+    calcular_contribuciones_capas,
+    generar_contrafactuales,
+)
+from modulo_a_radar_whop.motor_filtrado.verdict_cache import (
+    CacheVeredictosAEGIS,
+    construir_clave_veredicto,
+)
+from titan_core.db_engine import TitanDBEngine, obtener_db_engine
+from titan_core.event_bus import TitanEventBus, obtener_event_bus
 
 
 # ==================== PERFILES OPERATIVOS AEGIS-X ====================
@@ -335,6 +346,10 @@ class PipelineAEGIS:
         self.dedup = MotorDedup(db_path=db_path, usar_sqlite=usar_sqlite)
         self.ml = MotorAprendizajeCRM(db_path=db_path, usar_sqlite=usar_sqlite)
         self.auditoria = AlmacenAuditoriaSQLite(db_path=db_path) if self.guardar_auditoria else None
+        self._db_engine = obtener_db_engine(db_path=db_path) if usar_sqlite else None
+        self.bus = obtener_event_bus()
+        self.calibrador = CalibradorDinamicoAEGIS(db=self._db_engine, bus=self.bus, usar_sqlite=usar_sqlite)
+        self.verdict_cache = CacheVeredictosAEGIS(max_items=512, ttl_seg=900.0)
 
     @staticmethod
     def _score_intencion_y_competencia(intent: AnalisisIntencion, ctx: ContextoFiltro) -> float:
@@ -396,6 +411,86 @@ class PipelineAEGIS:
         elif riesgo.nivel == NivelRiesgo.ALTO:
             tags.append("🚩 RIESGO-ALTO")
         return tags
+
+    def resolver_perfil_efectivo(self, nombre: str | None) -> PerfilAEGIS:
+        base = obtener_perfil(nombre)
+        aj = self.calibrador.obtener_ajuste(base.nombre)
+        if aj is None:
+            return base
+        return PerfilAEGIS(
+            nombre=base.nombre,
+            descripcion=base.descripcion,
+            umbral_aprobacion=aj.umbral_aprobacion,
+            umbral_prioritario=aj.umbral_prioritario,
+            max_riesgo_permitido=aj.max_riesgo_permitido,
+            bloquear_lowball=base.bloquear_lowball,
+            solo_freelance_corto=base.solo_freelance_corto,
+            presupuesto_minimo_usd=base.presupuesto_minimo_usd,
+            tarifa_minima_usd_hr=base.tarifa_minima_usd_hr,
+            peso_taxonomia=aj.peso_taxonomia,
+            peso_economia=aj.peso_economia,
+            peso_intencion=aj.peso_intencion,
+            peso_calidad=aj.peso_calidad,
+        )
+
+    def comparar_perfiles(
+        self,
+        titulo: str,
+        cuerpo: str = "",
+        tags: str = "",
+        flair: str = "",
+        ctx_base: ContextoFiltro | None = None,
+    ) -> list[dict[str, Any]]:
+        base_c = ctx_base or ContextoFiltro()
+        salida: list[dict[str, Any]] = []
+        for p_nom in PERFILES_AEGIS.keys():
+            perf = self.resolver_perfil_efectivo(p_nom)
+            ctx_p = ContextoFiltro(
+                fuente=base_c.fuente,
+                plataforma=base_c.plataforma,
+                sub_o_categoria=base_c.sub_o_categoria,
+                autor=base_c.autor,
+                link=base_c.link,
+                edad_min=base_c.edad_min,
+                comentarios=base_c.comentarios,
+                monto_api_usd=base_c.monto_api_usd,
+                es_busqueda_global=base_c.es_busqueda_global,
+                perfil_nombre=p_nom,
+                tarifa_minima_usd_hr=perf.tarifa_minima_usd_hr,
+                presupuesto_minimo_usd=perf.presupuesto_minimo_usd,
+                solo_freelance_corto=perf.solo_freelance_corto,
+                idiomas_permitidos=base_c.idiomas_permitidos,
+                palabras_blacklist_usuario=list(base_c.palabras_blacklist_usuario),
+                palabras_whitelist_usuario=list(base_c.palabras_whitelist_usuario),
+            )
+            v = self.evaluar(
+                titulo=titulo, cuerpo=cuerpo, tags=tags, flair=flair,
+                post_id=f"cmp_{p_nom}", ctx=ctx_p,
+                registrar_dedup=False, simular_sin_dedup=True, registrar_auditoria=False,
+            )
+            salida.append({
+                "perfil": p_nom,
+                "aprobado": v.aprobado,
+                "decision": v.decision.value,
+                "score_0_100": round(v.score_compuesto_0_100, 1),
+                "umbral_efectivo": perf.umbral_aprobacion,
+                "razon": v.razon_principal,
+            })
+        return salida
+
+    def calibrar_automatico(self, perfil_nombre: str | None = None, aplicar: bool = True) -> dict[str, Any]:
+        if perfil_nombre:
+            base = obtener_perfil(perfil_nombre)
+            res = self.calibrador.calibrar_perfil(base, aplicar=aplicar)
+            if res.get("calibrado") and aplicar:
+                self.verdict_cache.limpiar()
+            return res
+        resultados = {}
+        for p_nom, base in PERFILES_AEGIS.items():
+            resultados[p_nom] = self.calibrador.calibrar_perfil(base, aplicar=aplicar)
+        if aplicar:
+            self.verdict_cache.limpiar()
+        return {"perfiles": resultados}
 
     def evaluar(
         self,
@@ -552,6 +647,9 @@ class PipelineAEGIS:
             senales_todas=senales_todas,
             tiempo_ms=round(elapsed_ms, 3),
         )
+
+        if clave_vc:
+            self.verdict_cache.guardar(clave_vc, veredicto)
 
         if registrar_auditoria and self.auditoria is not None:
             self.auditoria.encolar(pid, ctx, doc.titulo_limpio, veredicto)
@@ -712,6 +810,22 @@ class PipelineAEGIS:
             "muestras": veredicto.aprendizaje.muestras_entrenamiento,
             "impulsoras": veredicto.aprendizaje.palabras_impulsoras,
         } if veredicto.aprendizaje else None
+        perf_rad = self.resolver_perfil_efectivo("equilibrado")
+        base["contribuciones_capas"] = calcular_contribuciones_capas(
+            veredicto,
+            peso_tax=perf_rad.peso_taxonomia,
+            peso_econ=perf_rad.peso_economia,
+            peso_int=perf_rad.peso_intencion,
+            peso_cal=perf_rad.peso_calidad,
+        )
+        base["contrafactuales"] = generar_contrafactuales(
+            veredicto,
+            umbral_aprobacion=perf_rad.umbral_aprobacion,
+            umbral_prioritario=perf_rad.umbral_prioritario,
+            max_riesgo=perf_rad.max_riesgo_permitido,
+            presupuesto_minimo=perf_rad.presupuesto_minimo_usd,
+            tarifa_minima_hr=perf_rad.tarifa_minima_usd_hr,
+        )
         return base
 
 
