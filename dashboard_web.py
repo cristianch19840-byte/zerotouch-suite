@@ -33,6 +33,7 @@ from core_ia import (
     extraer_etiqueta,
 )
 from modulo_a_radar_whop.motor_filtrado.modelos import ContextoFiltro
+from titan_core.api_v2_app import despachar_en_handler_legacy
 from modulo_a_radar_whop.motor_filtrado.pipeline import (
     PERFILES_AEGIS,
     formatear_radiografia_texto,
