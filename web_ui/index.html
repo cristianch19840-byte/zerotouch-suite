@@ -38,6 +38,11 @@
         <span class="nav-label">Plataformas &amp; RSS</span>
         <span class="nav-badge" id="badgeFuentesOk">12</span>
       </button>
+      <button class="nav-item" id="nav_crm_v16" onclick="verTab('t_crm_v16','CRM Pro v16 ? Kanban, Clientes & Pitch A/B',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="10" rx="1"/></svg>
+        <span class="nav-label">CRM Pro v16</span>
+        <span class="nav-badge">D&amp;D</span>
+      </button>
       <button class="nav-item" id="nav_aegis" onclick="verTab('t_aegis','AEGIS-X Lab ? Motor Forense',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
         <span class="nav-label">AEGIS-X Lab</span>
@@ -289,6 +294,12 @@
             <div id="chCat"></div>
           </div>
         </div>
+      </section>
+
+      <!-- ==================== 3A. CRM PRO v16 (KANBAN D&D, CLIENTES, AGENDA, PITCH A/B) ==================== -->
+      <section id="t_crm_v16" class="view">
+        <div id="t16CrmSubtabs" class="t16-subtabs"></div>
+        <div id="t16CrmBody"></div>
       </section>
 
       <!-- ==================== 3B. AEGIS-X LAB (FORENSE & ML) ==================== -->
@@ -641,6 +652,8 @@
 <script src="/ui/ui_aegis.js"></script>
 <script src="/ui/titan_store.js"></script>
 <script src="/ui/titan_components.js"></script>
+<script src="/ui/ui_crm_v16.js"></script>
+<script src="/ui/ui_pitch_v16.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>

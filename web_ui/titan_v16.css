@@ -435,3 +435,235 @@
 .t16-toast.ok { border-left: 3px solid var(--t16-green); }
 .t16-toast.err { border-left: 3px solid var(--t16-red); }
 .t16-toast.warn { border-left: 3px solid var(--t16-amber); }
+
+/* ==================== FASE 16 — KANBAN DRAG&DROP, CLIENTES, AGENDA & PITCH STUDIO ==================== */
+.t16-subtabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--t16-border);
+  padding-bottom: 10px;
+}
+
+.t16-subtab {
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--t16-border);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--t16-text-1);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.t16-subtab:hover {
+  border-color: var(--t16-border-strong);
+  color: var(--t16-text-0);
+}
+
+.t16-subtab.active {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(59, 130, 246, 0.22));
+  border-color: var(--t16-cyan);
+  color: #e0f2fe;
+}
+
+.t16-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 14px;
+  background: rgba(12, 18, 32, 0.78);
+  border: 1px solid var(--t16-border);
+  border-radius: var(--t16-radius);
+  padding: 10px 12px;
+}
+
+.t16-input, .t16-select, .t16-textarea {
+  background: #070b14;
+  border: 1px solid var(--t16-border);
+  color: var(--t16-text-0);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+}
+
+.t16-input:focus, .t16-select:focus, .t16-textarea:focus {
+  border-color: var(--t16-cyan);
+}
+
+.t16-textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.t16-kanban-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(235px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  align-items: start;
+}
+
+.t16-kanban-col {
+  background: rgba(10, 15, 28, 0.88);
+  border: 1px solid var(--t16-border);
+  border-radius: var(--t16-radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+  max-height: 74vh;
+}
+
+.t16-kanban-col-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--t16-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.85);
+  border-radius: var(--t16-radius) var(--t16-radius) 0 0;
+}
+
+.t16-kanban-col-body {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.t16-lead-card {
+  background: linear-gradient(160deg, rgba(18, 27, 46, 0.94), rgba(11, 17, 31, 0.96));
+  border: 1px solid var(--t16-border);
+  border-radius: 10px;
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition: border-color 0.14s ease, transform 0.12s ease, box-shadow 0.14s ease;
+}
+
+.t16-lead-card:hover {
+  border-color: var(--t16-border-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(2, 6, 23, 0.45);
+}
+
+.t16-lead-card.selected {
+  border-color: var(--t16-cyan);
+  box-shadow: 0 0 0 1px var(--t16-cyan);
+}
+
+.t16-lead-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--t16-text-0);
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.t16-lead-title:hover {
+  color: var(--t16-cyan);
+}
+
+.t16-card-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.t16-btn-xs {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(30, 41, 59, 0.78);
+  border: 1px solid var(--t16-border);
+  color: var(--t16-text-1);
+  cursor: pointer;
+}
+
+.t16-btn-xs:hover {
+  border-color: var(--t16-cyan);
+  color: #fff;
+}
+
+.t16-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+}
+
+.t16-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 12px;
+}
+
+.t16-card-box {
+  background: linear-gradient(160deg, rgba(16, 24, 42, 0.94), rgba(10, 15, 28, 0.96));
+  border: 1px solid var(--t16-border);
+  border-radius: var(--t16-radius);
+  padding: 14px 16px;
+}
+
+.t16-agenda-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--t16-border);
+  background: rgba(15, 23, 42, 0.65);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.t16-agenda-row.vencida {
+  border-left: 3px solid var(--t16-red);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.t16-split-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.t16-score-ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--t16-mono);
+  font-weight: 800;
+  border: 3px solid var(--t16-cyan);
+  background: rgba(6, 9, 17, 0.8);
+  flex-shrink: 0;
+}
