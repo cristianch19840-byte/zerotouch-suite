@@ -230,6 +230,8 @@ function obtenerAccionesCmd() {
     { label: 'Activar / Detener Auto-Sniper', hint: 'Accion', run: () => toggleSniper() },
     { label: 'Cambiar CRM a Tablero Kanban', hint: 'Vista', run: () => { verTab('t_crm', 'Radar & CRM', document.getElementById('nav_crm')); setCrmView('kanban'); } },
     { label: 'Cambiar CRM a Tabla Compacta', hint: 'Vista', run: () => { verTab('t_crm', 'Radar & CRM', document.getElementById('nav_crm')); setCrmView('table'); } },
+    { label: 'Abrir Live Event Stream (SSE en vivo)', hint: 'TITAN v16', run: () => window.TitanUI && TitanUI.openEventsDrawer() },
+    { label: 'Iniciar / Detener Cron?metro Global', hint: 'Timer', run: () => window.TitanUI && TitanUI.toggleQuickTimer() },
     { label: 'Abrir AEGIS-X Lab (Simulador Forense & ML)', hint: 'AEGIS-X', run: () => verTab('t_aegis', 'AEGIS-X Lab ? Motor Forense', document.getElementById('nav_aegis')) },
     { label: 'Ir a Plataformas & RSS', hint: 'Navegacion', run: () => verTab('t_plat', 'Plataformas & RSS', document.getElementById('nav_plat')) },
     { label: 'Ir a Analytics & Graficos SVG', hint: 'Navegacion', run: () => verTab('t_stats', 'Analytics & Pipeline', document.getElementById('nav_stats')) },
