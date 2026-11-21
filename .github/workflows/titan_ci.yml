@@ -67,3 +67,7 @@ jobs:
       - name: Run AEGIS-X E2E & 1,000-Offer Benchmark
         run: |
           python test_aegis_e2e_v15.py
+
+      - name: Run TITAN-OS v16 Global E2E Suite
+        run: |
+          python test_titan_e2e_v16.py
