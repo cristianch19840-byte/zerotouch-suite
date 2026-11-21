@@ -69,6 +69,10 @@ DEFAULT_CONFIG = {
     "recordatorio_followup_horas": 20,
     "telegram_admin_id": "",
     "aegis_perfil": "equilibrado",
+    "ai_estrategia": "cloud_first",
+    "ai_budget_tokens_dia": 800000,
+    "ollama_url": "http://127.0.0.1:11434",
+    "ollama_modelo": "qwen3:8b",
     "presupuesto_minimo_usd": 20,
     "idiomas_permitidos": ["en", "es", "mixto"],
     "palabras_extra_blacklist": [],
@@ -691,3 +695,45 @@ def validar_y_reparar_python(codigo: str, descripcion: str = "") -> tuple[str, b
             except SyntaxError:
                 return fijo, False
         return codigo, False
+
+# ==================== TITAN-OS v16.0 AI ROUTER BRIDGE ====================
+_legacy_generar_texto_ia = generar_texto_ia
+_legacy_generar_json_ia = generar_json_ia
+_legacy_generar_json_lote_ia = generar_json_lote_ia
+
+def _titan_ai_delegate():
+    from titan_core.ai_router import obtener_ai_router
+    return obtener_ai_router()
+
+def generar_texto_ia(prompt: str, temperatura: float = 0.25, json_mode: bool = False, timeout: int = 24) -> str | None:
+    try:
+        r = _titan_ai_delegate().generar_texto(
+            prompt,
+            temperatura=temperatura,
+            json_mode=json_mode,
+            timeout=float(timeout),
+            tarea="copiloto" if timeout >= 30 else "general",
+        )
+        if r is not None:
+            return r
+    except Exception:
+        pass
+    return _legacy_generar_texto_ia(prompt, temperatura=temperatura, json_mode=json_mode, timeout=timeout)
+
+def generar_json_ia(prompt: str, temperatura: float = 0.2, timeout: int = 20) -> dict | None:
+    try:
+        r = _titan_ai_delegate().generar_json(prompt, temperatura=temperatura, timeout=float(timeout), tarea="rapida")
+        if isinstance(r, dict):
+            return r
+    except Exception:
+        pass
+    return _legacy_generar_json_ia(prompt, temperatura=temperatura, timeout=timeout)
+
+def generar_json_lote_ia(prompt: str, temperatura: float = 0.2, timeout: int = 28):
+    try:
+        r = _titan_ai_delegate().generar_json_lote(prompt, temperatura=temperatura, timeout=float(timeout))
+        if r is not None:
+            return r
+    except Exception:
+        pass
+    return _legacy_generar_json_lote_ia(prompt, temperatura=temperatura, timeout=timeout)
