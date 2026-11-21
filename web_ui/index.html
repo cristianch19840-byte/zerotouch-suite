@@ -48,6 +48,11 @@
         <span class="nav-label">Finanzas &amp; Timer</span>
         <span class="nav-badge">USD</span>
       </button>
+      <button class="nav-item" id="nav_studio_v16" onclick="verTab('t_studio_v16','Engineering Studio v16 ? Sandbox, Workflows & Factory',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span class="nav-label">Eng. Studio v16</span>
+        <span class="nav-badge">IDE</span>
+      </button>
       <button class="nav-item" id="nav_aegis" onclick="verTab('t_aegis','AEGIS-X Lab ? Motor Forense',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
         <span class="nav-label">AEGIS-X Lab</span>
@@ -311,6 +316,12 @@
       <section id="t_finanzas_v16" class="view">
         <div id="t16FinSubtabs" class="t16-subtabs"></div>
         <div id="t16FinBody"></div>
+      </section>
+
+      <!-- ==================== 3A3. ENGINEERING STUDIO v16 (SANDBOX, WORKFLOWS, FACTORY, OPS) ==================== -->
+      <section id="t_studio_v16" class="view">
+        <div id="t16EngSubtabs" class="t16-subtabs"></div>
+        <div id="t16EngBody"></div>
       </section>
 
       <!-- ==================== 3B. AEGIS-X LAB (FORENSE & ML) ==================== -->
@@ -667,6 +678,8 @@
 <script src="/ui/ui_pitch_v16.js"></script>
 <script src="/ui/ui_finanzas_v16.js"></script>
 <script src="/ui/ui_timer_v16.js"></script>
+<script src="/ui/ui_sandbox_v16.js"></script>
+<script src="/ui/ui_studio_ops_v16.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>

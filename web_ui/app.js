@@ -87,6 +87,7 @@ function verTab(id, title, btn) {
   if (id === 't_aegis' && typeof cargarAegisLab === 'function') cargarAegisLab();
   if (id === 't_crm_v16' && window.TitanCRMUI) TitanCRMUI.init();
   if (id === 't_finanzas_v16' && window.TitanFinUI) TitanFinUI.init();
+  if (id === 't_studio_v16' && window.TitanStudioUI) TitanStudioUI.init();
   if (id === 't_whop') { calcularPrecio(); cargarScriptsLista(); }
   if (id === 't_code') cargarScriptsLista();
 }
@@ -237,6 +238,10 @@ function obtenerAccionesCmd() {
     { label: 'Abrir CRM Pro v16 (Kanban Drag & Drop + Clientes + Pitch A/B)', hint: 'CRM v16', run: () => verTab('t_crm_v16', 'CRM Pro v16 ? Kanban, Clientes & Pitch A/B', document.getElementById('nav_crm_v16')) },
     { label: 'Abrir Finanzas Pro & Cashflow SVG (Facturas, Caja, Pasarelas)', hint: 'Finanzas', run: () => verTab('t_finanzas_v16', 'Finanzas Pro v16 ? Caja, Facturas & Time Tracker', document.getElementById('nav_finanzas_v16')) },
     { label: 'Abrir Time Tracker Pro (Cron?metro & USD/hr)', hint: 'Timer', run: () => { verTab('t_finanzas_v16', 'Finanzas Pro v16 ? Caja, Facturas & Time Tracker', document.getElementById('nav_finanzas_v16')); setTimeout(() => window.TitanFinUI && TitanFinUI.switchSubtab('timer'), 80); } },
+    { label: 'Abrir Sandbox Python IDE & Auto-Fix IA', hint: 'Studio', run: () => verTab('t_studio_v16', 'Engineering Studio v16 ? Sandbox, Workflows & Factory', document.getElementById('nav_studio_v16')) },
+    { label: 'Abrir Workflows IFTTT & Simulador Dry-Run', hint: 'IFTTT', run: () => { verTab('t_studio_v16', 'Engineering Studio v16 ? Sandbox, Workflows & Factory', document.getElementById('nav_studio_v16')); setTimeout(() => window.TitanStudioUI && TitanStudioUI.switchSubtab('workflows'), 80); } },
+    { label: 'Abrir Whop Factory & Licencias HMAC-SHA256', hint: 'Factory', run: () => { verTab('t_studio_v16', 'Engineering Studio v16 ? Sandbox, Workflows & Factory', document.getElementById('nav_studio_v16')); setTimeout(() => window.TitanStudioUI && TitanStudioUI.switchSubtab('factory'), 80); } },
+    { label: 'Abrir AI Router, Circuit Breakers & Drift Ops', hint: 'Ops', run: () => { verTab('t_studio_v16', 'Engineering Studio v16 ? Sandbox, Workflows & Factory', document.getElementById('nav_studio_v16')); setTimeout(() => window.TitanStudioUI && TitanStudioUI.switchSubtab('ops'), 80); } },
     { label: 'Abrir AEGIS-X Lab (Simulador Forense & ML)', hint: 'AEGIS-X', run: () => verTab('t_aegis', 'AEGIS-X Lab ? Motor Forense', document.getElementById('nav_aegis')) },
     { label: 'Ir a Plataformas & RSS', hint: 'Navegacion', run: () => verTab('t_plat', 'Plataformas & RSS', document.getElementById('nav_plat')) },
     { label: 'Ir a Analytics & Graficos SVG', hint: 'Navegacion', run: () => verTab('t_stats', 'Analytics & Pipeline', document.getElementById('nav_stats')) },

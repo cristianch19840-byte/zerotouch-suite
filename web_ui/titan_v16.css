@@ -765,3 +765,102 @@
   margin-bottom: 6px;
   font-size: 12px;
 }
+
+/* ==================== FASE 18 — ENGINEERING STUDIO (SANDBOX IDE, WORKFLOWS, WHOP FACTORY & OPS) ==================== */
+.t16-ide-shell {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  border: 1px solid var(--t16-border);
+  border-radius: 10px;
+  background: #050811;
+  overflow: hidden;
+  min-height: 290px;
+}
+
+.t16-ide-gutter {
+  background: rgba(15, 23, 42, 0.85);
+  border-right: 1px solid var(--t16-border);
+  padding: 10px 6px;
+  text-align: right;
+  font-family: var(--t16-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--t16-muted);
+  user-select: none;
+  overflow: hidden;
+}
+
+.t16-ide-editor {
+  width: 100%;
+  min-height: 290px;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  color: #e2e8f0;
+  font-family: var(--t16-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  resize: vertical;
+  outline: none;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+}
+
+.t16-console {
+  font-family: var(--t16-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: #04060c;
+  border: 1px solid var(--t16-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #cbd5e1;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.t16-console.err {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+.t16-console.ok {
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #86efac;
+}
+
+.t16-wf-card {
+  border: 1px solid var(--t16-border);
+  background: linear-gradient(160deg, rgba(16, 24, 42, 0.92), rgba(9, 14, 26, 0.96));
+  border-radius: var(--t16-radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.t16-wf-card.paused {
+  opacity: 0.68;
+}
+
+.t16-code-inline {
+  font-family: var(--t16-mono);
+  font-size: 11.5px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid var(--t16-border);
+  padding: 2px 6px;
+  border-radius: 5px;
+  color: var(--t16-cyan);
+}
+
+.t16-lic-key {
+  font-family: var(--t16-mono);
+  font-size: 11px;
+  background: #050811;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: #67e8f9;
+  word-break: break-all;
+}
