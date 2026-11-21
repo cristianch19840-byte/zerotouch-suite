@@ -117,10 +117,15 @@ MAPA_PIP = {
 _LOG_LOCK = threading.Lock()
 _LOG_BUFFER: deque[str] = deque(maxlen=150)
 
-def log_evento(msg: str, imprimir: bool = False) -> None:
+def log_evento(msg: str, imprimir: bool = False, componente: str = "core", nivel: str = "info") -> None:
     linea = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
     with _LOG_LOCK:
         _LOG_BUFFER.append(linea)
+    try:
+        from titan_core.telemetry import obtener_logger
+        obtener_logger().registrar(nivel, componente, msg, emitir_bus=True)
+    except Exception:
+        pass
     if imprimir:
         print(linea, flush=True)
 
