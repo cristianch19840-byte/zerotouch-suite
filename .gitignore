@@ -16,3 +16,5 @@ logs/
 *.jsonl
 *.meta.json
 .titan_snapshots/
+.titan_license_secret
+productos_whop/
