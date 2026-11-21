@@ -43,6 +43,11 @@
         <span class="nav-label">CRM Pro v16</span>
         <span class="nav-badge">D&amp;D</span>
       </button>
+      <button class="nav-item" id="nav_finanzas_v16" onclick="verTab('t_finanzas_v16','Finanzas Pro v16 ? Caja, Facturas & Time Tracker',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        <span class="nav-label">Finanzas &amp; Timer</span>
+        <span class="nav-badge">USD</span>
+      </button>
       <button class="nav-item" id="nav_aegis" onclick="verTab('t_aegis','AEGIS-X Lab ? Motor Forense',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
         <span class="nav-label">AEGIS-X Lab</span>
@@ -300,6 +305,12 @@
       <section id="t_crm_v16" class="view">
         <div id="t16CrmSubtabs" class="t16-subtabs"></div>
         <div id="t16CrmBody"></div>
+      </section>
+
+      <!-- ==================== 3A2. FINANZAS PRO & TIME TRACKER v16 ==================== -->
+      <section id="t_finanzas_v16" class="view">
+        <div id="t16FinSubtabs" class="t16-subtabs"></div>
+        <div id="t16FinBody"></div>
       </section>
 
       <!-- ==================== 3B. AEGIS-X LAB (FORENSE & ML) ==================== -->
@@ -654,6 +665,8 @@
 <script src="/ui/titan_components.js"></script>
 <script src="/ui/ui_crm_v16.js"></script>
 <script src="/ui/ui_pitch_v16.js"></script>
+<script src="/ui/ui_finanzas_v16.js"></script>
+<script src="/ui/ui_timer_v16.js"></script>
 <script src="/ui/app.js"></script>
 </body>
 </html>

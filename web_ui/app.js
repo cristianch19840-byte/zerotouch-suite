@@ -86,6 +86,7 @@ function verTab(id, title, btn) {
   if (id === 't_stats') renderAnalytics();
   if (id === 't_aegis' && typeof cargarAegisLab === 'function') cargarAegisLab();
   if (id === 't_crm_v16' && window.TitanCRMUI) TitanCRMUI.init();
+  if (id === 't_finanzas_v16' && window.TitanFinUI) TitanFinUI.init();
   if (id === 't_whop') { calcularPrecio(); cargarScriptsLista(); }
   if (id === 't_code') cargarScriptsLista();
 }
@@ -234,6 +235,8 @@ function obtenerAccionesCmd() {
     { label: 'Abrir Live Event Stream (SSE en vivo)', hint: 'TITAN v16', run: () => window.TitanUI && TitanUI.openEventsDrawer() },
     { label: 'Iniciar / Detener Cron?metro Global', hint: 'Timer', run: () => window.TitanUI && TitanUI.toggleQuickTimer() },
     { label: 'Abrir CRM Pro v16 (Kanban Drag & Drop + Clientes + Pitch A/B)', hint: 'CRM v16', run: () => verTab('t_crm_v16', 'CRM Pro v16 ? Kanban, Clientes & Pitch A/B', document.getElementById('nav_crm_v16')) },
+    { label: 'Abrir Finanzas Pro & Cashflow SVG (Facturas, Caja, Pasarelas)', hint: 'Finanzas', run: () => verTab('t_finanzas_v16', 'Finanzas Pro v16 ? Caja, Facturas & Time Tracker', document.getElementById('nav_finanzas_v16')) },
+    { label: 'Abrir Time Tracker Pro (Cron?metro & USD/hr)', hint: 'Timer', run: () => { verTab('t_finanzas_v16', 'Finanzas Pro v16 ? Caja, Facturas & Time Tracker', document.getElementById('nav_finanzas_v16')); setTimeout(() => window.TitanFinUI && TitanFinUI.switchSubtab('timer'), 80); } },
     { label: 'Abrir AEGIS-X Lab (Simulador Forense & ML)', hint: 'AEGIS-X', run: () => verTab('t_aegis', 'AEGIS-X Lab ? Motor Forense', document.getElementById('nav_aegis')) },
     { label: 'Ir a Plataformas & RSS', hint: 'Navegacion', run: () => verTab('t_plat', 'Plataformas & RSS', document.getElementById('nav_plat')) },
     { label: 'Ir a Analytics & Graficos SVG', hint: 'Navegacion', run: () => verTab('t_stats', 'Analytics & Pipeline', document.getElementById('nav_stats')) },
