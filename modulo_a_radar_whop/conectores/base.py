@@ -19,6 +19,12 @@ _DOMAIN_LOCK = threading.Lock()
 _LAST_HIT: dict[str, float] = {}
 
 def esperar_dominio(dominio: str, min_intervalo: float = 0.25) -> None:
+    try:
+        from titan_core.rate_limiter import obtener_rate_limiter
+        obtener_rate_limiter().adquirir(dominio, pausa_min_override=min_intervalo)
+        return
+    except Exception:
+        pass
     with _DOMAIN_LOCK:
         ahora = time.time()
         ultimo = _LAST_HIT.get(dominio, 0.0)
