@@ -109,3 +109,17 @@ def crear_meta_fuente(
         "descartes": descartes or {},
         "error": error,
     }
+
+def http_get_blindado(url: str, *, params=None, headers=None, timeout: float = 12.0, cache_ttl_seg: float = 90.0):
+    from titan_core.http_shield import obtener_http_shield
+    return obtener_http_shield().get(
+        url, params=params, headers=headers, timeout=timeout,
+        reintentos=1, cache_ttl_seg=cache_ttl_seg, usar_etag=True,
+    )
+
+def http_get_json_blindado(url: str, *, params=None, headers=None, timeout: float = 12.0, cache_ttl_seg: float = 90.0):
+    from titan_core.http_shield import obtener_http_shield
+    return obtener_http_shield().get_json(
+        url, params=params, headers=headers, timeout=timeout,
+        reintentos=1, cache_ttl_seg=cache_ttl_seg, usar_etag=True,
+    )

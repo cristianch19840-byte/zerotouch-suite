@@ -67,6 +67,15 @@ ALIAS_FUENTES = {
     "arbeitnow": "arbeitnow",
     "rss": "rss_custom",
     "rss_custom": "rss_custom",
+    "devto": "devto",
+    "lobsters": "lobsters",
+    "lob": "lobsters",
+    "pyorg": "python_org",
+    "python_org": "python_org",
+    "bpro": "bounties_pro",
+    "bounties_pro": "bounties_pro",
+    "ffeeds": "freelance_feeds",
+    "freelance_feeds": "freelance_feeds",
 }
 
 AYUDA_HTML = (

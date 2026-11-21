@@ -91,6 +91,11 @@ CATALOGO_PLATAFORMAS = [
     {"clave": "workingnomads", "nombre": "Working Nomads", "tipo": "remoto", "desc": "Bolsa internacional de contratos y dev remoto"},
     {"clave": "arbeitnow", "nombre": "Arbeitnow", "tipo": "remoto", "desc": "Tech remoto Europa / Global (filtrado remote=True)"},
     {"clave": "rss_custom", "nombre": "Feeds RSS Custom", "tipo": "custom", "desc": "Tus propios links RSS/Atom personalizados"},
+    {"clave": "devto", "nombre": "Dev.to Hiring", "tipo": "freelance", "desc": "API oficial Dev.to (#hiring, #freelance, #bounty)"},
+    {"clave": "lobsters", "nombre": "Lobste.rs Jobs", "tipo": "remoto", "desc": "Feeds JSON oficiales de ingenieria y contratos"},
+    {"clave": "python_org", "nombre": "Python.org Jobs", "tipo": "remoto", "desc": "Bolsa oficial de Python (filtrado remoto/contrato)"},
+    {"clave": "bounties_pro", "nombre": "Bounties Pro", "tipo": "bounty", "desc": "Algora, Opire, Polar y GitHub issues sin asignar"},
+    {"clave": "freelance_feeds", "nombre": "Freelance Feeds Pro", "tipo": "freelance", "desc": "Pack PyJobs, RemotePython, AuthenticJobs & HN Freelancer"},
 ]
 
 HTML_DASHBOARD = r"""<!DOCTYPE html>

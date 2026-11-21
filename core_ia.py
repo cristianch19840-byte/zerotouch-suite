@@ -49,6 +49,11 @@ DEFAULT_FUENTES_ACTIVAS = {
     "workingnomads": True,
     "arbeitnow": True,
     "rss_custom": True,
+    "devto": True,
+    "lobsters": True,
+    "python_org": True,
+    "bounties_pro": True,
+    "freelance_feeds": True,
 }
 
 DEFAULT_CONFIG = {

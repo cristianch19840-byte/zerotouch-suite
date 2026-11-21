@@ -44,6 +44,7 @@ from modulo_a_radar_whop.conectores.bolsas_remotas import escanear_bolsas_remota
 from modulo_a_radar_whop.conectores.rss_universal import escanear_weworkremotely, escanear_rss_custom
 from modulo_a_radar_whop.conectores.base import crear_meta_fuente
 from modulo_a_radar_whop.motor_filtrado.pipeline import obtener_pipeline_aegis
+from modulo_a_radar_whop.conectores.freelance_feeds import recolectar_conectores_pro
 
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TG_CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -527,6 +528,18 @@ def ejecutar_ciclo(modo_sonido: bool = False, dry_run: bool = False) -> dict:
 
         ofertas, telemetria = recolectar_todo(cfg)
         registrar_salud_fuentes(conn, telemetria["detalle_fuentes"])
+
+        try:
+            ofertas_pro, metas_pro = recolectar_conectores_pro(cfg, persistir_salud=True)
+            if ofertas_pro:
+                ofertas.extend(ofertas_pro)
+            if metas_pro:
+                if "detalle_fuentes" in locals() and isinstance(locals()["detalle_fuentes"], list):
+                    locals()["detalle_fuentes"].extend(metas_pro)
+                elif "metas_fuentes" in locals() and isinstance(locals()["metas_fuentes"], list):
+                    locals()["metas_fuentes"].extend(metas_pro)
+        except Exception as _e_pro:
+            log_evento(f"Aviso conectores Pro: {_e_pro}")
 
         pendientes_aegis = []
         for item in ofertas:
