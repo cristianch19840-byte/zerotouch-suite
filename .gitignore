@@ -15,3 +15,4 @@ modulo_c_whop/producto_listo/
 logs/
 *.jsonl
 *.meta.json
+.titan_snapshots/
