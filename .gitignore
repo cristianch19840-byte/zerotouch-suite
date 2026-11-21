@@ -18,3 +18,6 @@ logs/
 .titan_snapshots/
 .titan_license_secret
 productos_whop/
+estado_radar_v4.db
+.titan_vault_key
+vault_backups/

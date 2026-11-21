@@ -1,0 +1,69 @@
+name: TITAN-OS v16 CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  verify-titan-v16:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Setup Node.js (JS syntax check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Compile all Python modules
+        run: |
+          python -m compileall -q titan_core modulo_a_radar_whop modulo_b_ejecutor modulo_c_whop modulo_d_marketing core_ia.py dashboard_web.py panel.py telegram_bot_control.py titan_cli.py
+
+      - name: Check JS syntax (web_ui)
+        run: |
+          for f in web_ui/*.js; do
+            node --check "$f"
+          done
+
+      - name: Validate HTML unique IDs
+        run: |
+          python - << 'PY'
+          from html.parser import HTMLParser
+          class V(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.ids, self.dups = set(), []
+              def handle_starttag(self, tag, attrs):
+                  for k, v in attrs:
+                      if k == "id":
+                          if v in self.ids: self.dups.append(v)
+                          self.ids.add(v)
+          v = V()
+          v.feed(open("web_ui/index.html", encoding="utf-8").read())
+          assert not v.dups, f"Duplicate IDs: {v.dups}"
+          print(f"[OK] index.html verified ({len(v.ids)} unique IDs)")
+          PY
+
+      - name: Run Security Audit & CLI Doctor
+        run: |
+          python titan_cli.py audit --strict
+          python titan_cli.py doctor
+
+      - name: Run AEGIS-X E2E & 1,000-Offer Benchmark
+        run: |
+          python test_aegis_e2e_v15.py
