@@ -502,3 +502,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# ==================== TITAN-OS v16.0 TELEGRAM CALLBACKS BRIDGE ====================
+def _despachar_update_titan_v16(upd: dict) -> bool:
+    try:
+        from titan_core.telegram_bot_v16 import obtener_telegram_bot_v16
+        return obtener_telegram_bot_v16().procesar_update(upd)
+    except Exception:
+        return False
