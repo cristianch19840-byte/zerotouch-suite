@@ -186,6 +186,7 @@
     document.body.appendChild(wrap);
 
     wrap.addEventListener('click', (e) => { if (e.target === wrap) cerrarModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wrap.classList.contains('open')) cerrarModal(); });
     wrap.querySelector('#t17CloseCleanBtn').addEventListener('click', cerrarModal);
     wrap.querySelector('#t17CancelCleanBtn').addEventListener('click', cerrarModal);
     wrap.querySelector('#t17ExecCleanBtn').addEventListener('click', ejecutarLimpieza);

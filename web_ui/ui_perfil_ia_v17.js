@@ -35,23 +35,23 @@
     w.innerHTML = `
       <div class="t17-modal" style="max-width:560px">
         <div class="t17-m-head">
-          <h3>🤖 Perfil Filtro: Gemini 3.8 Flash (High) + Menor</h3>
+          <h3>\uD83E\uDD16 Perfil Filtro: Gemini 3.8 Flash (High) + Menor</h3>
           <button type="button" class="t17-m-close" id="t17IaClose">&times;</button>
         </div>
         <div class="t17-m-body">
           <div class="t17-checks">
-            <label><input type="checkbox" id="t17IaActivo"> ✅ Activar filtro inteligente Gemini 3.8 Flash (High)</label>
-            <label><input type="checkbox" id="t17IaKyc"> 🛡️ Bloquear requisitos 18+, KYC, W-9, NDA y contratos formales</label>
-            <label><input type="checkbox" id="t17IaEnt"> 🎥 Bloquear entrevistas técnicas en vivo y daily standups</label>
-            <label><input type="checkbox" id="t17IaPlats"> 🚫 Bloquear plataformas KYC estrictas (Freelancer, Upwork, Toptal, Fiverr)</label>
+            <label><input type="checkbox" id="t17IaActivo"> \u2705 Activar filtro inteligente Gemini 3.8 Flash (High)</label>
+            <label><input type="checkbox" id="t17IaKyc"> \uD83D\uDEE1\uFE0F Bloquear requisitos 18+, KYC, W-9, NDA y contratos formales</label>
+            <label><input type="checkbox" id="t17IaEnt"> \uD83C\uDFA5 Bloquear entrevistas t\u00e9cnicas en vivo y daily standups</label>
+            <label><input type="checkbox" id="t17IaPlats"> \uD83D\uDEAB Bloquear plataformas KYC estrictas (Freelancer, Upwork, Toptal, Fiverr)</label>
           </div>
           <div class="t17-ia-grid">
-            <div class="t17-ia-field"><label>Presupuesto máximo (USD)</label><input type="number" id="t17IaMaxUsd" min="50" max="5000" step="50"></div>
-            <div class="t17-ia-field"><label>Máximo de ofertas/bids permitidos</label><input type="number" id="t17IaMaxBids" min="5" max="200" step="5"></div>
+            <div class="t17-ia-field"><label>Presupuesto m\u00e1ximo (USD)</label><input type="number" id="t17IaMaxUsd" min="50" max="5000" step="50"></div>
+            <div class="t17-ia-field"><label>M\u00e1ximo de ofertas/bids permitidos</label><input type="number" id="t17IaMaxBids" min="5" max="200" step="5"></div>
           </div>
           <div style="border-top:1px solid var(--t17-border);padding-top:12px;display:flex;flex-direction:column;gap:8px">
-            <strong style="font-size:12.5px">🧪 Probador rápido de ofertas (sin gastar tokens)</strong>
-            <input type="text" id="t17IaTestTit" placeholder="Pega el título de una oferta (ej: Simple Google Sheets script $60)">
+            <strong style="font-size:12.5px">\uD83E\uDDEA Probador r\u00e1pido de ofertas (sin gastar tokens)</strong>
+            <input type="text" id="t17IaTestTit" placeholder="Pega el t\u00edtulo de una oferta (ej: Simple Google Sheets script $60)">
             <div style="display:flex;gap:8px">
               <input type="text" id="t17IaTestPlat" placeholder="Plataforma (ej: Reddit, GitHub, Freelancer.com)" style="flex:1">
               <button type="button" class="t17-btn-sec" id="t17IaTestBtn">Probar</button>
@@ -61,13 +61,14 @@
         </div>
         <div class="t17-m-foot">
           <button type="button" class="t17-btn-sec" id="t17IaCancel">Cerrar</button>
-          <button type="button" class="primary" id="t17IaSave" style="padding:8px 16px">💾 Guardar Perfil</button>
+          <button type="button" class="primary" id="t17IaSave" style="padding:8px 16px">\uD83D\uDCBE Guardar Perfil</button>
         </div>
       </div>
     `;
     document.body.appendChild(w);
     const cerrar = () => w.classList.remove('open');
     w.addEventListener('click', (e) => { if (e.target === w) cerrar(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && w.classList.contains('open')) cerrar(); });
     w.querySelector('#t17IaClose').onclick = cerrar;
     w.querySelector('#t17IaCancel').onclick = cerrar;
 
@@ -80,26 +81,34 @@
         presupuesto_max_usd: Number(w.querySelector('#t17IaMaxUsd').value) || 600,
         max_bids_permitidos: Number(w.querySelector('#t17IaMaxBids').value) || 30,
       };
-      const r = await fetch('/api/v2/perfil-ia', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const d = await r.json();
-      if (d && d.ok) { toast('🤖 Perfil Gemini 3.8 Flash guardado y activo', 'ok'); cerrar(); }
-      else toast('❌ No se pudo guardar el perfil', 'err');
+      try {
+        const r = await fetch('/api/v2/perfil-ia', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const d = await r.json();
+        if (r.ok && d && d.ok) { toast('\uD83E\uDD16 Perfil Gemini 3.8 Flash guardado y activo', 'ok'); cerrar(); }
+        else toast('\u274C No se pudo guardar el perfil', 'err');
+      } catch (_) { toast('\u274C No se pudo conectar con el servidor', 'err'); }
     };
 
     w.querySelector('#t17IaTestBtn').onclick = async () => {
       const box = w.querySelector('#t17IaTestRes');
-      const r = await fetch('/api/v2/perfil-ia/probar', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ titulo: w.querySelector('#t17IaTestTit').value, cuerpo: '', plataforma: w.querySelector('#t17IaTestPlat').value }),
-      });
-      const d = await r.json();
-      if (!d || !d.ok) return;
-      const res = d.resultado;
-      box.className = 't17-ia-res ' + (res.bloqueado ? 'bad' : 'ok');
-      box.textContent = res.bloqueado
-        ? `⛔ BLOQUEADA: ${res.motivo}`
-        : `✅ APTA PARA GEMINI 3.8 FLASH (+${res.delta_score} score) ${res.hits_fit.length ? '• Coincidencias: ' + res.hits_fit.join(', ') : ''}`;
+      try {
+        const r = await fetch('/api/v2/perfil-ia/probar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ titulo: w.querySelector('#t17IaTestTit').value, cuerpo: '', plataforma: w.querySelector('#t17IaTestPlat').value }),
+        });
+        const d = await r.json();
+        if (!r.ok || !d || !d.ok) { toast('\u274C Error al probar la oferta', 'err'); return; }
+        const res = d.resultado;
+        box.className = 't17-ia-res ' + (res.bloqueado ? 'bad' : 'ok');
+        box.textContent = res.bloqueado
+          ? `\u26D4 BLOQUEADA: ${res.motivo}`
+          : `\u2705 APTA PARA GEMINI 3.8 FLASH (+${res.delta_score} score)${res.hits_fit.length ? ' \u2022 Coincidencias: ' + res.hits_fit.join(', ') : ''}`;
+      } catch (_) { toast('\u274C No se pudo conectar con el servidor', 'err'); }
     };
+
+    ['#t17IaTestTit', '#t17IaTestPlat'].forEach((sel) => {
+      w.querySelector(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') w.querySelector('#t17IaTestBtn').click(); });
+    });
   }
 
   async function abrirModal() {
@@ -109,7 +118,7 @@
     try {
       const r = await fetch('/api/v2/perfil-ia', { cache: 'no-store' });
       const d = await r.json();
-      if (d && d.ok && d.perfil) {
+      if (r.ok && d && d.ok && d.perfil) {
         const p = d.perfil;
         w.querySelector('#t17IaActivo').checked = Boolean(p.activo);
         w.querySelector('#t17IaKyc').checked = Boolean(p.bloquear_kyc_y_edad);
@@ -124,19 +133,24 @@
   function montarBoton() {
     if (document.getElementById('titanV17PerfilBtn')) return;
     const btn = document.createElement('button');
-    btn.id = 'titanV17PerfilBtn';
-    btn.type = 'button';
-    btn.className = 't17-btn-ia';
-    btn.textContent = '🤖 Perfil IA';
+    btn.id = 'titanV17PerfilBtn'; btn.type = 'button'; btn.className = 't17-btn-ia';
+    btn.textContent = '\uD83E\uDD16 Perfil IA';
     btn.title = 'Configurar filtro Gemini 3.8 Flash (High) + Menor';
     btn.onclick = abrirModal;
-
     const ancla = document.getElementById('titanV17CleanBtn')
       || Array.from(document.querySelectorAll('header button, .topbar button, button')).find((b) => /\bCSV\b|Escanear/i.test(b.textContent || ''));
     if (ancla && ancla.parentNode) ancla.parentNode.insertBefore(btn, ancla.nextSibling);
   }
 
-  function init() { crearModal(); setTimeout(montarBoton, 150); }
+  function init() {
+    crearModal();
+    let n = 0;
+    const t = setInterval(() => {
+      montarBoton();
+      if (document.getElementById('titanV17PerfilBtn') || ++n >= 12) clearInterval(t);
+    }, 100);
+  }
+
   global.TitanPerfilIAUI = { abrir: abrirModal };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
