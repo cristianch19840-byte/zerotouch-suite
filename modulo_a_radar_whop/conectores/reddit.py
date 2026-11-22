@@ -467,6 +467,11 @@ def _buscar_global(query_str: str, query_simple: str, etiqueta: str, cfg: dict) 
     _acum_as, _vistos_as, _ok_as = [], set(), 0
     for _sub_as, _kw_as in _pares_as:
         _chunk = consultar_arctic_shift({"subreddit": _sub_as, "title": _kw_as, "limit": 10, "sort": "desc"})
+        if _chunk is None:
+            time.sleep(1.0)
+            _chunk = consultar_arctic_shift({"subreddit": _sub_as, "title": _kw_as, "limit": 10, "sort": "desc"})
+        if _chunk is None:
+            _chunk = consultar_pullpush({"subreddit": _sub_as, "q": _kw_as, "size": 10, "sort": "desc", "sort_type": "created_utc"})
         if _chunk is not None:
             _ok_as += 1
             for _p_as in _chunk:
