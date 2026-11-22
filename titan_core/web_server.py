@@ -161,7 +161,6 @@ class SSEStreamManager:
         max_eventos = req.qint("max_events", 0)  # Util para clientes puntuales o pruebas automatizadas
 
         # Enviar cabeceras SSE
-        handler.close_connection = True
         handler.send_response(200)
         handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
         handler.send_header("Cache-Control", "no-cache, no-transform")
@@ -218,6 +217,7 @@ class SSEStreamManager:
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
         finally:
+            handler.close_connection = True
             self.bus.cerrar_stream(stream)
             with self._lock:
                 self._clientes_activos = max(0, self._clientes_activos - 1)
