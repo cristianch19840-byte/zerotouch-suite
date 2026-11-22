@@ -1525,8 +1525,8 @@ class Handler(BaseHTTPRequestHandler):
                 cfg_t = cargar_config()
                 prueba = {
                     "id": "test_web_v13",
-                    "fuente": "Freelancer.com",
-                    "plataforma": "Freelancer",
+                    "fuente": "Reddit",
+                    "plataforma": "Reddit",
                     "tipo_trabajo": "freelance",
                     "autor": "test_client",
                     "titulo": "Build Python Playwright scraper for Shopify stores ($250 USD)",

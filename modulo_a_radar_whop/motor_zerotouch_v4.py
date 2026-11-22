@@ -737,8 +737,8 @@ if __name__ == "__main__":
         cfg_t = cargar_config()
         prueba = {
             "id": "test_omni_v13",
-            "fuente": "Freelancer.com",
-            "plataforma": "Freelancer",
+            "fuente": "Reddit",
+            "plataforma": "Reddit",
             "tipo_trabajo": "freelance",
             "autor": "test_client",
             "titulo": "Build Python Playwright scraper for Shopify stores ($300 USD)",
