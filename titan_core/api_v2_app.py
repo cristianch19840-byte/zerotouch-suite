@@ -290,7 +290,7 @@ def despachar_en_handler_legacy(http_handler: Any, method: str, raw_body: bytes 
     usando el motor TITAN-OS v16 sin romper ninguna ruta legacy de v14/v15.
     """
     path_raw = str(getattr(http_handler, "path", "") or "")
-    if not path_raw.startswith("/api/v2"):
+    if not path_raw.startswith(("/api/v2", "/ui/titan_", "/ui/ui_")):
         return False
 
     from titan_core.web_router import parsear_path_y_query
