@@ -93,7 +93,7 @@ def obtener_headers_reddit_oauth() -> dict | None:
     return None
 
 def consultar_arctic_shift(params: dict) -> list | None:
-    esperar_dominio("arctic-shift.photon-reddit.com", 0.14)
+    esperar_dominio("arctic-shift.photon-reddit.com", 0.40)
     try:
         r = SESSION.get(
             "https://arctic-shift.photon-reddit.com/api/posts/search",
@@ -452,9 +452,32 @@ def _buscar_global(query_str: str, query_simple: str, etiqueta: str, cfg: dict) 
         except Exception:
             pass
 
-    max_h_m = max(36, safe_int(cfg.get("max_horas_post", 18), 18))
-    raw_list = consultar_arctic_shift({"title": query_simple, "limit": 25, "sort": "desc"})
-    modo_g = "ArcticShift"
+    max_h_m = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
+    _q_low = (query_simple or "").lower()
+    if "automation" in _q_low or etiqueta == "Reddit-Global2":
+        _pares_as = [
+            ("forhire", "automation"),
+            ("slavelabour", "bot"),
+        ]
+    else:
+        _pares_as = [
+            ("forhire", "python"),
+            ("slavelabour", "script"),
+        ]
+    _acum_as, _vistos_as, _ok_as = [], set(), 0
+    for _sub_as, _kw_as in _pares_as:
+        _chunk = consultar_arctic_shift({"subreddit": _sub_as, "title": _kw_as, "limit": 10, "sort": "desc"})
+        if _chunk is not None:
+            _ok_as += 1
+            for _p_as in _chunk:
+                _pid = str(_p_as.get("id") or "")
+                if _pid and _pid in _vistos_as:
+                    continue
+                if _pid:
+                    _vistos_as.add(_pid)
+                _acum_as.append(_p_as)
+    raw_list = _acum_as if _ok_as > 0 else None
+    modo_g = f"ArcticShift {_ok_as}/{len(_pares_as)}"
     if raw_list is None:
         raw_list = consultar_pullpush({"q": query_simple, "size": 25, "sort": "desc", "sort_type": "created_utc"})
         modo_g = "PullPush"
@@ -480,7 +503,7 @@ def escanear_reddit(cfg: dict) -> tuple[list[dict], list[dict]]:
     q_g1 = '("Hiring" OR "looking to hire" OR "will pay") (python OR scraper OR scraping OR selenium OR playwright)'
     q_g2 = '("Hiring" OR "looking to hire" OR "will pay") (telegram OR discord OR bot OR automation OR shopify OR n8n)'
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futuros = [pool.submit(_obtener_lote, nom, subs, cfg) for nom, subs in MULTIREDDIT_BATCHES]
         futuros.append(pool.submit(_buscar_global, q_g1, "hiring python", "Reddit-Global1", cfg))
         futuros.append(pool.submit(_buscar_global, q_g2, "hiring automation", "Reddit-Global2", cfg))
