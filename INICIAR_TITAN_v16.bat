@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title ZeroTouch TITAN-OS v16.0 - Launcher Maestro
+title ZeroTouch TITAN-OS v17.1 - Launcher Maestro
 setlocal
 cd /d "%~dp0"
 set PY=C:\Users\CASADIK\AppData\Local\Programs\Python\Python312\python.exe
@@ -9,7 +9,7 @@ if not exist "%PY%" set PY=python
 :MENU
 cls
 echo ====================================================================
-echo           ZEROTOUCH TITAN-OS v16.0 - CENTRO DE MANDO
+echo           ZEROTOUCH TITAN-OS v17.1 - CENTRO DE MANDO
 echo ====================================================================
 echo   [1] Abrir Dashboard Web + API v2 + SSE Live (Recomendado)
 echo   [2] Levantar Solo Servidor TITAN-OS v16 (titan_cli.py serve :8765)
