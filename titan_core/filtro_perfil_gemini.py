@@ -167,3 +167,33 @@ def aplicar_perfil_a_veredicto(veredicto: Any, *, titulo: str = "", cuerpo: str 
             sc = _get_s(veredicto, fs, None)
             if isinstance(sc, (int, float)): _set_s(veredicto, fs, min(10, int(round(sc)) + int(res["delta_score"])))
     return veredicto
+
+
+def registrar_rutas_perfil_ia(router: Any, svc: Any = None) -> None:
+    from titan_core.radar_cleaner import _leer_json_req, _montar_ruta
+
+    def _get_cfg(req: Any) -> dict[str, Any]:
+        return {"ok": True, "perfil": cargar_perfil_config()}
+
+    def _set_cfg(req: Any) -> dict[str, Any]:
+        body = _leer_json_req(req)
+        nuevo = guardar_perfil_config(body)
+        if svc is not None and getattr(svc, "aegis", None) is not None:
+            vc = getattr(svc.aegis, "verdict_cache", None)
+            if vc is not None and hasattr(vc, "limpiar"):
+                try: vc.limpiar()
+                except Exception: pass
+        return {"ok": True, "perfil": nuevo}
+
+    def _probar(req: Any) -> dict[str, Any]:
+        body = _leer_json_req(req)
+        res = evaluar_aptitud_gemini_menor(
+            titulo=str(body.get("titulo") or ""),
+            cuerpo=str(body.get("cuerpo") or ""),
+            plataforma=str(body.get("plataforma") or ""),
+        )
+        return {"ok": True, "resultado": res, "perfil": cargar_perfil_config()}
+
+    _montar_ruta(router, "GET", "/api/v2/perfil-ia", _get_cfg, "perfil_ia_v2_get")
+    _montar_ruta(router, "POST", "/api/v2/perfil-ia", _set_cfg, "perfil_ia_v2_set")
+    _montar_ruta(router, "POST", "/api/v2/perfil-ia/probar", _probar, "perfil_ia_v2_probar")

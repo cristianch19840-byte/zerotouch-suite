@@ -269,6 +269,8 @@ def crear_app_titan_v16(
     montar_api_v2_en_router(srv.router, svc)
     from titan_core.radar_cleaner import registrar_rutas_limpieza
     registrar_rutas_limpieza(srv.router, svc)
+    from titan_core.filtro_perfil_gemini import registrar_rutas_perfil_ia
+    registrar_rutas_perfil_ia(srv.router, svc)
     return srv, svc
 
 
