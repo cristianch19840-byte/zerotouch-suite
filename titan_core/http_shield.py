@@ -499,7 +499,7 @@ class TitanHTTPShield:
         return self._cache.limpiar()
 
 
-_SHIELD_LOCK = threading.Lock()
+_SHIELD_LOCK = threading.RLock()
 _SHIELD_SINGLETON: TitanHTTPShield | None = None
 
 

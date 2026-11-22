@@ -219,7 +219,7 @@ class TitanEventBus:
             }
 
 
-_BUS_LOCK = threading.Lock()
+_BUS_LOCK = threading.RLock()
 _BUS_SINGLETON: TitanEventBus | None = None
 
 

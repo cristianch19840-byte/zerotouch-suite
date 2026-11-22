@@ -254,7 +254,7 @@ class TitanTelemetry:
             }
 
 
-_TEL_LOCK = threading.Lock()
+_TEL_LOCK = threading.RLock()
 _LOGGER_SINGLETON: RotatingJSONLLogger | None = None
 _TEL_SINGLETON: TitanTelemetry | None = None
 

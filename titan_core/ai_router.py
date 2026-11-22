@@ -393,7 +393,7 @@ class TitanAIRouter:
         }
 
 
-_ROUTER_LOCK = threading.Lock()
+_ROUTER_LOCK = threading.RLock()
 _ROUTER_SINGLETON: TitanAIRouter | None = None
 
 

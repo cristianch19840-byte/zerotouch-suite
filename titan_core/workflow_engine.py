@@ -698,7 +698,7 @@ class TitanWorkflowEngine:
         }
 
 
-_WF_LOCK = threading.Lock()
+_WF_LOCK = threading.RLock()
 _WF_SINGLETON: TitanWorkflowEngine | None = None
 
 

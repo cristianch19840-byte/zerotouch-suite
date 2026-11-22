@@ -722,7 +722,7 @@ class TitanPitchEngine:
         }
 
 
-_PITCH_LOCK = threading.Lock()
+_PITCH_LOCK = threading.RLock()
 _PITCH_SINGLETON: TitanPitchEngine | None = None
 
 

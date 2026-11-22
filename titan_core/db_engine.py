@@ -57,9 +57,18 @@ def _columnas_tabla(conn: sqlite3.Connection, tabla: str) -> set[str]:
 
 def _asegurar_columna(conn: sqlite3.Connection, tabla: str, col: str, definicion: str) -> None:
     if col not in _columnas_tabla(conn, tabla):
-        conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {definicion}")
-
-
+        import re as _re_col
+        _def_clean = str(definicion or "")
+        _es_ts_default = bool(_re_col.search(r"\bDEFAULT\s+(?:CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|\()", _def_clean, _re_col.IGNORECASE))
+        if _es_ts_default:
+            _def_sql = _re_col.sub(r"\bDEFAULT\s+(?:CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|\([^)]*\))", "", _def_clean, flags=_re_col.IGNORECASE)
+            _def_sql = _re_col.sub(r"\bNOT\s+NULL\b", "", _def_sql, flags=_re_col.IGNORECASE)
+            _def_sql = " ".join(_def_sql.split()) or "TEXT"
+            conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {_def_sql}")
+            if _re_col.search(r"CURRENT_TIMESTAMP", _def_clean, _re_col.IGNORECASE):
+                conn.execute(f"UPDATE {tabla} SET {col} = CURRENT_TIMESTAMP WHERE {col} IS NULL")
+        else:
+            conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {definicion}")
 # ==================== MIGRACIONES VERSIONADAS (v1 .. v6) ====================
 def _mig_001_tablas_base(conn: sqlite3.Connection) -> None:
     conn.execute(
@@ -122,6 +131,7 @@ def _mig_001_tablas_base(conn: sqlite3.Connection) -> None:
         _asegurar_columna(conn, "leads", col, df)
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_estado ON leads(estado)")
+    _asegurar_columna(conn, "leads", "link", "TEXT DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_link ON leads(link)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_tipo ON leads(tipo_trabajo)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_cliente ON leads(cliente_id)")
@@ -703,7 +713,7 @@ class TitanDBEngine:
         self._local.conn = None
 
 
-_ENGINE_LOCK = threading.Lock()
+_ENGINE_LOCK = threading.RLock()
 _ENGINE_SINGLETON: TitanDBEngine | None = None
 
 

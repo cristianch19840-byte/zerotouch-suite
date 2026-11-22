@@ -457,7 +457,7 @@ class TitanTimeTracker:
         return "\ufeff" + buf.getvalue()
 
 
-_TT_LOCK = threading.Lock()
+_TT_LOCK = threading.RLock()
 _TT_SINGLETON: TitanTimeTracker | None = None
 
 

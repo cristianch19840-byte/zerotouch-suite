@@ -739,7 +739,7 @@ class TitanFinanceService:
         return "\ufeff" + buf.getvalue()
 
 
-_FIN_LOCK = threading.Lock()
+_FIN_LOCK = threading.RLock()
 _FIN_SINGLETON: TitanFinanceService | None = None
 
 

@@ -506,7 +506,7 @@ class TitanTelegramBotV16:
             self._thread = None
 
 
-_TG_LOCK = threading.Lock()
+_TG_LOCK = threading.RLock()
 _TG_SINGLETON: TitanTelegramBotV16 | None = None
 
 

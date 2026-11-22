@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 title ZeroTouch TITAN-OS v16.0 — Launcher Maestro
 setlocal
 cd /d "%~dp0"

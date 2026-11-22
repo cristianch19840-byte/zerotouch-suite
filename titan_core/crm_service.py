@@ -932,7 +932,7 @@ class TitanCRMService:
         }
 
 
-_CRM_LOCK = threading.Lock()
+_CRM_LOCK = threading.RLock()
 _CRM_SINGLETON: TitanCRMService | None = None
 
 

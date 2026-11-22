@@ -619,7 +619,7 @@ class TitanProductFactory:
         return n > 0
 
 
-_FAC_LOCK = threading.Lock()
+_FAC_LOCK = threading.RLock()
 _FAC_SINGLETON: TitanProductFactory | None = None
 
 

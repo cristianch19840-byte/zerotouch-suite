@@ -269,7 +269,7 @@ class TitanRateLimiter:
         return out
 
 
-_RL_LOCK = threading.Lock()
+_RL_LOCK = threading.RLock()
 _RL_SINGLETON: TitanRateLimiter | None = None
 
 

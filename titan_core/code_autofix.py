@@ -524,7 +524,7 @@ class TitanCodeAutoFixer:
         )
 
 
-_FIX_LOCK = threading.Lock()
+_FIX_LOCK = threading.RLock()
 _FIX_SINGLETON: TitanCodeAutoFixer | None = None
 
 

@@ -271,7 +271,7 @@ def crear_app_titan_v16(
 
 
 # ==================== SINGLETON BRIDGE PARA COEXISTENCIA CON dashboard_web.py ====================
-_BRIDGE_LOCK = threading.Lock()
+_BRIDGE_LOCK = threading.RLock()
 _BRIDGE_SRV: TitanWebServer | None = None
 _BRIDGE_SVC: TitanServiceContainer | None = None
 

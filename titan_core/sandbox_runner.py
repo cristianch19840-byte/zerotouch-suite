@@ -755,7 +755,7 @@ class TitanSandboxRunner:
         }
 
 
-_SBX_LOCK = threading.Lock()
+_SBX_LOCK = threading.RLock()
 _SBX_SINGLETON: TitanSandboxRunner | None = None
 
 

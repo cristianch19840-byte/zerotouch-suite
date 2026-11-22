@@ -289,7 +289,7 @@ class TitanCircuitBreakerManager:
         return lista
 
 
-_CB_LOCK = threading.Lock()
+_CB_LOCK = threading.RLock()
 _CB_SINGLETON: TitanCircuitBreakerManager | None = None
 
 

@@ -435,7 +435,7 @@ def require_valid_license() -> dict:
 '''
 
 
-_LIC_LOCK = threading.Lock()
+_LIC_LOCK = threading.RLock()
 _LIC_SINGLETON: TitanLicenseEngine | None = None
 
 
