@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from typing import Any
 
 import requests
@@ -100,6 +101,9 @@ def _llamar_gemini_json(prompt: str, timeout: int = 30) -> tuple[dict[str, Any] 
                 r = requests.post(url, json=payload, timeout=timeout)
                 if r.status_code == 400 and usar_mime:
                     continue
+                if r.status_code == 429:
+                    time.sleep(1.5)
+                    break
                 if r.status_code != 200:
                     break
                 cands = r.json().get("candidates") or []
@@ -161,8 +165,8 @@ def _normalizar_resultado(
         bloqueado = bool(reglas.get("bloqueado"))
         return {
             "resumen_es": f"Oferta en {plataforma or 'web'}: {titulo[:180]} (sin conexión IA para traducir).",
-            "suficiente_gemini_38_high": not bloqueado,
-            "veredicto": "NO_APTA" if bloqueado else "REVISAR",
+            "suficiente_gemini_38_high": False,
+            "veredicto": "NO_APTA" if bloqueado else "SIN_IA",
             "confianza": 70 if bloqueado else 45,
             "nivel_dificultad": "alta" if bloqueado else "media",
             "motivo_es": reglas.get("motivo") or "Pendiente de evaluación IA (modo offline).",

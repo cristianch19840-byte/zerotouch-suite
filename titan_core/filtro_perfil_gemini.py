@@ -9,7 +9,7 @@ DEFAULT_PERFIL_CONFIG: dict[str, Any] = {
     "bloquear_kyc_y_edad": True,
     "bloquear_entrevistas_en_vivo": True,
     "bloquear_plataformas_kyc": True,
-    "plataformas_kyc": ["freelancer.com", "freelancer", "upwork", "toptal", "fiverr"],
+    "plataformas_kyc": ['freelancer.com', 'freelancer', 'upwork', 'toptal', 'fiverr', 'python.org', 'weworkremotely', 'wwr', 'remotive', 'remoteok', 'indeed', 'linkedin', 'wellfound', 'arbeitnow', 'jobicy', 'himalayas'],
     "presupuesto_max_usd": 600,
     "max_bids_permitidos": 30,
     "min_score_aprobado": 6,

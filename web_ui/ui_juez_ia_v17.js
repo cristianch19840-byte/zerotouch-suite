@@ -129,11 +129,14 @@
           const b = box.querySelector('.t17-juez-mini');
           if (b) b.onclick = (e) => { e.stopPropagation(); verificarUno(lid, b); };
         } else {
-          const ok = Boolean(info.suficiente_gemini_38_high);
-          box.className = 't17-juez-box ' + (ok ? 'apta' : 'noapta');
-          const pill = ok
-            ? `<span class="t17-juez-pill ok">\u2705 Gemini 3.8 High: APTA (${esc(info.nivel_dificultad || 'media')})</span>`
-            : `<span class="t17-juez-pill bad">\u26D4 NO APTA para Gemini 3.8 High (${esc(info.nivel_dificultad || 'alta')})</span>`;
+          const sinIa = info.veredicto === 'SIN_IA' || info.veredicto === 'REVISAR' || info.modelo_usado === 'heuristica_offline';
+          const ok = !sinIa && Boolean(info.suficiente_gemini_38_high);
+          box.className = 't17-juez-box ' + (sinIa ? '' : (ok ? 'apta' : 'noapta'));
+          const pill = sinIa
+            ? `<span class="t17-juez-pill wait">\u26A0\uFE0F Pendiente de IA (cuota / sin conexi\u00f3n)</span>`
+            : (ok
+              ? `<span class="t17-juez-pill ok">\u2705 Gemini 3.8 High: APTA (${esc(info.nivel_dificultad || 'media')})</span>`
+              : `<span class="t17-juez-pill bad">\u26D4 NO APTA para Gemini 3.8 High (${esc(info.nivel_dificultad || 'alta')})</span>`);
           const tip = ok && info.pasos_sugeridos_es
             ? `<div class="t17-juez-tip">\uD83D\uDCA1 <b>C\u00f3mo pedirlo:</b> ${esc(info.pasos_sugeridos_es)}</div>`
             : '';
