@@ -322,6 +322,9 @@ class ConectorBountiesPro:
         return hdrs
 
     def recolectar(self, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        from datetime import datetime as _dt_bp, timedelta as _td_bp, timezone as _tz_bp
+        _max_h_bp = max(1, int(cfg.get("max_horas_post") or 12))
+        _desde_bp = (_dt_bp.now(_tz_bp.utc) - _td_bp(hours=max(24, _max_h_bp + 12))).strftime("%Y-%m-%d")
         ofertas: list[dict[str, Any]] = []
         vistos: set[str] = set()
         hdrs = self._headers_github()
@@ -337,7 +340,7 @@ class ConectorBountiesPro:
             url = f"{self.github_api_base}/search/issues"
             data, resp = self.adapter.get_json(
                 url,
-                params={"q": q, "sort": "created", "order": "desc", "per_page": 20},
+                params={"q": f"{q} created:>={_desde_bp}", "sort": "created", "order": "desc", "per_page": 20},
                 headers=hdrs,
                 timeout=12.0,
                 cache_ttl_seg=240.0,
@@ -372,6 +375,8 @@ class ConectorBountiesPro:
                 pres_txt = f"${int(round(monto)):,} Bounty" if monto > 0 else "Bounty Pago"
                 ep = parsear_fecha_epoch(issue.get("created_at"))
                 edad_min = calcular_edad_min(ep)
+                if edad_min is not None and edad_min > _max_h_bp * 60:
+                    continue
                 coms = int(issue.get("comments") or 0)
                 link = str(issue.get("html_url") or "")
                 user = issue.get("user") or {}

@@ -35,7 +35,9 @@ def escanear_github_bounties(cfg: dict, forzar: bool = False) -> tuple[list[dict
     items: list[dict] = []
     vistos_ids: set[int] = set()
     ahora = datetime.now(timezone.utc)
-    desde = (ahora - timedelta(days=14)).strftime("%Y-%m-%d")
+    max_h = max(1, safe_int(cfg.get("max_horas_post", 12), 12))
+    max_edad_min = max_h * 60
+    desde = (ahora - timedelta(hours=max(24, max_h + 12))).strftime("%Y-%m-%d")
 
     # 2 consultas simples que GitHub Search API siempre acepta (0 errores HTTP 422)
     queries = [
@@ -88,6 +90,8 @@ def escanear_github_bounties(cfg: dict, forzar: bool = False) -> tuple[list[dict
 
                 repo_url = iss.get("repository_url") or ""
                 repo_nom = "/".join(repo_url.split("/")[-2:]) if "/repos/" in repo_url else "GitHub"
+                if edad_min > max_edad_min:
+                    continue
                 comentarios = safe_int(iss.get("comments", 0), 0)
                 pref = f"[Bounty ${int(dinero_local)}]" if dinero_local > 0 else "[Bounty]"
                 comp_txt = f"💎 {repo_nom} ({edad_min // 60}h | {comentarios} com.)"

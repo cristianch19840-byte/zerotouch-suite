@@ -146,6 +146,9 @@ def recolectar_todo(cfg: dict) -> tuple[list[dict], dict]:
         ofertas_raw = [x for x in ofertas_raw if x.get("tipo_trabajo") in ("freelance", "bounty")]
 
     # Orden inicial por calidad/frescura antes de deduplicar en memoria
+    # Candado global de frescura: respeta max_horas_post en TODOS los conectores
+    _max_edad_global_min = max(1, safe_int(cfg.get("max_horas_post", 12), 12)) * 60
+    ofertas_raw = [x for x in ofertas_raw if x.get("edad_min") is None or x.get("edad_min") <= _max_edad_global_min]
     ofertas_raw.sort(
         key=lambda x: (
             1 if x.get("tipo_trabajo") in ("freelance", "bounty") else 0,
