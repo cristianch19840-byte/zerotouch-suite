@@ -516,7 +516,8 @@ class PipelineAEGIS:
             )
             hit_vc = self.verdict_cache.obtener(clave_vc)
             if hit_vc is not None:
-                return hit_vc
+                from titan_core.filtro_perfil_gemini import aplicar_perfil_a_veredicto
+                return aplicar_perfil_a_veredicto(hit_vc, titulo=titulo, cuerpo=cuerpo, plataforma="", ctx=ctx)
         pid = str(post_id or ctx.link or titulo[:80])
 
         # --- CAPA 1: NORMALIZACION FORENSE ---
@@ -664,7 +665,8 @@ class PipelineAEGIS:
         if registrar_auditoria and self.auditoria is not None:
             self.auditoria.encolar(pid, ctx, doc.titulo_limpio, veredicto)
 
-        return veredicto
+        from titan_core.filtro_perfil_gemini import aplicar_perfil_a_veredicto
+        return aplicar_perfil_a_veredicto(veredicto, titulo=titulo, cuerpo=cuerpo, plataforma="", ctx=ctx)
 
     def evaluar_lote_ofertas(
         self,
