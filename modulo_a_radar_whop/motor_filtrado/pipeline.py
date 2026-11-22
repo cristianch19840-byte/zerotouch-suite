@@ -504,9 +504,19 @@ class PipelineAEGIS:
         simular_sin_dedup: bool = False,
         registrar_auditoria: bool = False,
     ) -> VeredictoFiltro:
+        clave_vc = ""
         t0 = time.perf_counter()
         ctx = ctx or ContextoFiltro()
-        perfil = obtener_perfil(ctx.perfil_nombre)
+        perfil = self.resolver_perfil_efectivo(ctx.perfil_nombre)
+        if simular_sin_dedup and not registrar_dedup and not registrar_auditoria:
+            clave_vc = construir_clave_veredicto(
+                titulo=titulo, cuerpo=cuerpo, tags=tags, flair=flair, ctx=ctx,
+                firma_calibracion=self.calibrador.firma_perfil(perfil.nombre),
+                firma_ml=self.ml.estado_actual().firma_datos,
+            )
+            hit_vc = self.verdict_cache.obtener(clave_vc)
+            if hit_vc is not None:
+                return hit_vc
         pid = str(post_id or ctx.link or titulo[:80])
 
         # --- CAPA 1: NORMALIZACION FORENSE ---
