@@ -286,16 +286,64 @@ def obtener_api_v2_bridge() -> tuple[TitanWebServer, TitanServiceContainer]:
 
 def despachar_en_handler_legacy(http_handler: Any, method: str, raw_body: bytes | None = None) -> bool:
     """
-    Puente limpio: permite que dashboard_web.py atienda /api/v2/* y /api/v2/events/stream
-    usando el motor TITAN-OS v16 sin romper ninguna ruta legacy de v14/v15.
+    Puente completo TITAN-OS v16 para dashboard_web.py:
+    - GET / y /index.html -> web_ui/index.html (UI v16 sin cache)
+    - GET /ui/* -> archivos estaticos en web_ui/ (con soporte ?v=16 y MIME types)
+    - ANY /api/v2/* y GET /api/v2/events/stream -> Router REST v2 + SSE Live
+    Cualquier otra ruta (/api/* legacy) devuelve False para seguir en dashboard_web.py.
     """
+    import mimetypes
+    import os
+    from titan_core.db_engine import ROOT_DIR
+    from titan_core.web_router import parsear_path_y_query
+
+    met = method.upper()
     path_raw = str(getattr(http_handler, "path", "") or "")
-    if not path_raw.startswith(("/api/v2", "/ui/titan_", "/ui/ui_")):
+    path, query = parsear_path_y_query(path_raw)
+    ui_root = os.path.realpath(os.path.join(ROOT_DIR, "web_ui"))
+
+    # A) Pagina principal v16 y estaticos /ui/*
+    if met in ("GET", "HEAD"):
+        target_file = None
+        no_cache = False
+        if path in ("/", "/index.html"):
+            cand = os.path.join(ui_root, "index.html")
+            if os.path.isfile(cand):
+                target_file = cand
+                no_cache = True
+        elif path.startswith("/ui/"):
+            rel = path[len("/ui/"):].lstrip("/")
+            cand = os.path.realpath(os.path.join(ui_root, rel))
+            if cand.startswith(ui_root + os.sep) and os.path.isfile(cand):
+                target_file = cand
+
+        if target_file is not None:
+            with open(target_file, "rb") as f:
+                data = f.read()
+            ctype, _ = mimetypes.guess_type(target_file)
+            if target_file.endswith(".js"):
+                ctype = "application/javascript; charset=utf-8"
+            elif target_file.endswith(".css"):
+                ctype = "text/css; charset=utf-8"
+            elif target_file.endswith(".html"):
+                ctype = "text/html; charset=utf-8"
+            elif not ctype:
+                ctype = "application/octet-stream"
+
+            http_handler.send_response(200)
+            http_handler.send_header("Content-Type", ctype)
+            http_handler.send_header("Content-Length", str(len(data)))
+            http_handler.send_header("Cache-Control", "no-store" if no_cache else "no-cache")
+            http_handler.end_headers()
+            if met != "HEAD":
+                http_handler.wfile.write(data)
+            return True
+
+    # B) API REST v2 + SSE Live
+    if not path.startswith("/api/v2"):
         return False
 
-    from titan_core.web_router import parsear_path_y_query
     srv, _ = obtener_api_v2_bridge()
-    path, query = parsear_path_y_query(path_raw)
     hdrs = {str(k).lower(): str(v) for k, v in http_handler.headers.items()}
     if raw_body is None:
         cl = int(hdrs.get("content-length") or 0)
@@ -303,9 +351,9 @@ def despachar_en_handler_legacy(http_handler: Any, method: str, raw_body: bytes 
     else:
         body = raw_body
     cip = str(http_handler.client_address[0]) if getattr(http_handler, "client_address", None) else "127.0.0.1"
-    req = TitanRequest(method=method.upper(), raw_path=path_raw, path=path, query=query, headers=hdrs, client_ip=cip, body=body)
+    req = TitanRequest(method=met, raw_path=path_raw, path=path, query=query, headers=hdrs, client_ip=cip, body=body)
 
-    if method.upper() == "GET" and path == "/api/v2/events/stream":
+    if met == "GET" and path == "/api/v2/events/stream":
         srv.sse.atender_conexion(http_handler, req)
         return True
 
@@ -317,6 +365,6 @@ def despachar_en_handler_legacy(http_handler: Any, method: str, raw_body: bytes 
         if k.lower() not in ("content-length", "content-type"):
             http_handler.send_header(k, v)
     http_handler.end_headers()
-    if method.upper() != "HEAD" and resp.body:
+    if met != "HEAD" and resp.body:
         http_handler.wfile.write(resp.body)
     return True

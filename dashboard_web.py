@@ -1233,7 +1233,33 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def do_PUT(self):
+        if despachar_en_handler_legacy(self, 'PUT'):
+            return
+        self.send_response(405)
+        self.end_headers()
+
+    def do_PATCH(self):
+        if despachar_en_handler_legacy(self, 'PATCH'):
+            return
+        self.send_response(405)
+        self.end_headers()
+
+    def do_DELETE(self):
+        if despachar_en_handler_legacy(self, 'DELETE'):
+            return
+        self.send_response(405)
+        self.end_headers()
+
+    def do_OPTIONS(self):
+        if despachar_en_handler_legacy(self, 'OPTIONS'):
+            return
+        self.send_response(204)
+        self.end_headers()
+
     def do_GET(self) -> None:
+        if despachar_en_handler_legacy(self, 'GET'):
+            return
         parsed = urlparse(self.path)
         ruta = parsed.path
         qs = parse_qs(parsed.query)
@@ -1395,6 +1421,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, code=500)
 
     def do_POST(self) -> None:
+        if despachar_en_handler_legacy(self, 'POST'):
+            return
         global CURRENT_SNIPER_STOP
         ruta = urlparse(self.path).path
         try:
