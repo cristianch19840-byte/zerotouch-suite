@@ -1,0 +1,368 @@
+/* ============================================================================
+   ZEROTOUCH TITAN-OS v17.0 — "OBSIDIAN GLASS" VISUAL REMAKE
+   Temas dinamicos: [data-titan-theme="obsidian" | "neon" | "light"]
+   ============================================================================ */
+
+:root,
+:root[data-titan-theme="obsidian"] {
+  --t17-bg: #070910;
+  --t17-bg-grad-1: rgba(99, 102, 241, 0.14);
+  --t17-bg-grad-2: rgba(16, 185, 129, 0.09);
+  --t17-sidebar: rgba(11, 15, 25, 0.88);
+  --t17-surface: rgba(16, 21, 34, 0.78);
+  --t17-surface-solid: #111726;
+  --t17-surface-elev: rgba(23, 30, 48, 0.86);
+  --t17-surface-hover: rgba(31, 41, 66, 0.75);
+  --t17-border: rgba(148, 163, 184, 0.14);
+  --t17-border-strong: rgba(148, 163, 184, 0.26);
+  --t17-text: #eef2ff;
+  --t17-text-soft: #cbd5e1;
+  --t17-muted: #8b9bb4;
+  --t17-accent: #6366f1;
+  --t17-accent-2: #22d3ee;
+  --t17-accent-glow: rgba(99, 102, 241, 0.32);
+  --t17-green: #10b981;
+  --t17-amber: #f59e0b;
+  --t17-red: #f43f5e;
+  --t17-shadow: 0 12px 32px rgba(2, 6, 23, 0.45);
+  --t17-shadow-sm: 0 4px 14px rgba(2, 6, 23, 0.30);
+
+  /* Sincronizacion con variables legacy del dashboard */
+  --bg: var(--t17-bg);
+  --bg-dark: var(--t17-bg);
+  --panel: var(--t17-surface-solid);
+  --card: var(--t17-surface);
+  --surface: var(--t17-surface);
+  --border: var(--t17-border);
+  --text: var(--t17-text);
+  --muted: var(--t17-muted);
+  --accent: var(--t17-accent);
+  --green: var(--t17-green);
+  --yellow: var(--t17-amber);
+  --red: var(--t17-red);
+}
+
+:root[data-titan-theme="neon"] {
+  --t17-bg: #05040c;
+  --t17-bg-grad-1: rgba(192, 38, 211, 0.18);
+  --t17-bg-grad-2: rgba(6, 182, 212, 0.14);
+  --t17-sidebar: rgba(10, 7, 22, 0.92);
+  --t17-surface: rgba(18, 13, 36, 0.80);
+  --t17-surface-solid: #120d24;
+  --t17-surface-elev: rgba(28, 20, 54, 0.88);
+  --t17-surface-hover: rgba(45, 29, 82, 0.78);
+  --t17-border: rgba(192, 132, 252, 0.20);
+  --t17-border-strong: rgba(34, 211, 238, 0.42);
+  --t17-text: #faf5ff;
+  --t17-text-soft: #e9d5ff;
+  --t17-muted: #a78bfa;
+  --t17-accent: #c026d3;
+  --t17-accent-2: #06b6d4;
+  --t17-accent-glow: rgba(192, 38, 211, 0.42);
+  --t17-green: #00f5a0;
+  --t17-amber: #fbbf24;
+  --t17-red: #ff3366;
+  --t17-shadow: 0 14px 38px rgba(0, 0, 0, 0.65);
+  --t17-shadow-sm: 0 4px 18px rgba(192, 38, 211, 0.18);
+
+  --bg: var(--t17-bg);
+  --bg-dark: var(--t17-bg);
+  --panel: var(--t17-surface-solid);
+  --card: var(--t17-surface);
+  --surface: var(--t17-surface);
+  --border: var(--t17-border);
+  --text: var(--t17-text);
+  --muted: var(--t17-muted);
+  --accent: var(--t17-accent);
+  --green: var(--t17-green);
+  --yellow: var(--t17-amber);
+  --red: var(--t17-red);
+}
+
+:root[data-titan-theme="light"] {
+  --t17-bg: #f1f5f9;
+  --t17-bg-grad-1: rgba(79, 70, 229, 0.08);
+  --t17-bg-grad-2: rgba(14, 165, 233, 0.07);
+  --t17-sidebar: rgba(255, 255, 255, 0.94);
+  --t17-surface: rgba(255, 255, 255, 0.92);
+  --t17-surface-solid: #ffffff;
+  --t17-surface-elev: #f8fafc;
+  --t17-surface-hover: #eef2ff;
+  --t17-border: rgba(15, 23, 42, 0.10);
+  --t17-border-strong: rgba(79, 70, 229, 0.28);
+  --t17-text: #0f172a;
+  --t17-text-soft: #334155;
+  --t17-muted: #64748b;
+  --t17-accent: #4f46e5;
+  --t17-accent-2: #0284c7;
+  --t17-accent-glow: rgba(79, 70, 229, 0.20);
+  --t17-green: #059669;
+  --t17-amber: #d97706;
+  --t17-red: #e11d48;
+  --t17-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
+  --t17-shadow-sm: 0 2px 10px rgba(15, 23, 42, 0.05);
+
+  --bg: var(--t17-bg);
+  --bg-dark: var(--t17-bg);
+  --panel: var(--t17-surface-solid);
+  --card: var(--t17-surface);
+  --surface: var(--t17-surface);
+  --border: var(--t17-border);
+  --text: var(--t17-text);
+  --muted: var(--t17-muted);
+  --accent: var(--t17-accent);
+  --green: var(--t17-green);
+  --yellow: var(--t17-amber);
+  --red: var(--t17-red);
+}
+
+/* ==================== LIENZO BASE & TIPOGRAFIA ==================== */
+html, body {
+  background-color: var(--t17-bg) !important;
+  background-image:
+    radial-gradient(ellipse 65% 45% at 15% -5%, var(--t17-bg-grad-1), transparent 70%),
+    radial-gradient(ellipse 55% 40% at 88% 5%, var(--t17-bg-grad-2), transparent 68%) !important;
+  background-attachment: fixed !important;
+  color: var(--t17-text) !important;
+  font-family: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  letter-spacing: -0.008em;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--t17-border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 7px; height: 7px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--t17-border-strong);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--t17-accent); }
+
+/* ==================== SIDEBAR OBSIDIAN GLASS ==================== */
+aside, .sidebar, #sidebar {
+  background: var(--t17-sidebar) !important;
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-right: 1px solid var(--t17-border) !important;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.14);
+}
+
+.brand-logo, .logo-badge, .sidebar .logo {
+  background: linear-gradient(135deg, var(--t17-accent), var(--t17-accent-2)) !important;
+  box-shadow: 0 6px 20px var(--t17-accent-glow) !important;
+  border-radius: 11px !important;
+}
+
+.nav-item, .sidebar button, .sidebar a, [data-tab] {
+  border-radius: 10px !important;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.15s ease, border-color 0.18s ease !important;
+}
+
+.nav-item:hover, .sidebar .nav-btn:hover {
+  background: var(--t17-surface-hover) !important;
+  transform: translateX(2px);
+}
+
+.nav-item.active, .sidebar .nav-btn.active {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--t17-accent) 22%, transparent), color-mix(in srgb, var(--t17-accent-2) 8%, transparent)) !important;
+  border: 1px solid color-mix(in srgb, var(--t17-accent) 45%, transparent) !important;
+  color: var(--t17-text) !important;
+  box-shadow: inset 3px 0 0 var(--t17-accent), 0 4px 16px color-mix(in srgb, var(--t17-accent) 16%, transparent) !important;
+}
+
+/* ==================== TOPBAR FLOTANTE ==================== */
+header, .topbar, .top-bar {
+  background: color-mix(in srgb, var(--t17-sidebar) 86%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid var(--t17-border) !important;
+}
+
+/* ==================== TARJETAS KPI & PANELES GLASS ==================== */
+.kpi, .kpi-card, .stat-card, .card, .panel, .box, .titan-card, .titan-panel {
+  background: var(--t17-surface) !important;
+  border: 1px solid var(--t17-border) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--t17-shadow-sm) !important;
+  backdrop-filter: blur(12px);
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.kpi:hover, .kpi-card:hover, .stat-card:hover {
+  border-color: var(--t17-border-strong) !important;
+  transform: translateY(-2px);
+  box-shadow: var(--t17-shadow) !important;
+}
+
+.kpi::before, .kpi-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 12px auto 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--t17-accent-2) 55%, transparent), transparent);
+  pointer-events: none;
+}
+.kpi, .kpi-card { position: relative; overflow: hidden; }
+
+.kpi .val, .kpi-card .val, .kpi-value, .stat-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+/* ==================== CONTROLES, INPUTS Y BOTONES ==================== */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  background: var(--t17-surface-elev) !important;
+  color: var(--t17-text) !important;
+  border: 1px solid var(--t17-border) !important;
+  border-radius: 10px !important;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease !important;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none !important;
+  border-color: var(--t17-accent) !important;
+  box-shadow: 0 0 0 3px var(--t17-accent-glow) !important;
+}
+
+button, .btn {
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  transition: transform 0.14s ease, filter 0.16s ease, box-shadow 0.18s ease, background 0.16s ease !important;
+}
+
+button:active:not(:disabled), .btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+button.primary, .btn-primary, .btn.primary {
+  background: linear-gradient(135deg, var(--t17-accent), color-mix(in srgb, var(--t17-accent) 70%, var(--t17-accent-2))) !important;
+  color: #ffffff !important;
+  border: 1px solid color-mix(in srgb, var(--t17-accent-2) 35%, transparent) !important;
+  box-shadow: 0 4px 16px var(--t17-accent-glow) !important;
+}
+button.primary:hover, .btn-primary:hover, .btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+/* ==================== TABLA DE LEADS ULTRA LEGIBLE ==================== */
+table {
+  border-collapse: separate !important;
+  border-spacing: 0 6px !important;
+}
+
+table thead th {
+  background: transparent !important;
+  color: var(--t17-muted) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.07em !important;
+  text-transform: uppercase !important;
+  border-bottom: 1px solid var(--t17-border) !important;
+  padding: 10px 12px !important;
+}
+
+table tbody tr {
+  background: var(--t17-surface) !important;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+table tbody tr td {
+  border-top: 1px solid var(--t17-border) !important;
+  border-bottom: 1px solid var(--t17-border) !important;
+  padding: 12px 12px !important;
+  vertical-align: middle !important;
+}
+
+table tbody tr td:first-child {
+  border-left: 1px solid var(--t17-border) !important;
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+table tbody tr td:last-child {
+  border-right: 1px solid var(--t17-border) !important;
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+table tbody tr:hover {
+  background: var(--t17-surface-hover) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+/* ==================== SELECTOR DE TEMA v17 ==================== */
+.t17-theme-dock {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--t17-surface-elev);
+  border: 1px solid var(--t17-border);
+  margin: 8px 10px;
+}
+
+.t17-theme-btn {
+  flex: 1;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--t17-muted) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  padding: 5px 6px !important;
+  border-radius: 8px !important;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.t17-theme-btn:hover {
+  color: var(--t17-text) !important;
+  background: var(--t17-surface-hover) !important;
+}
+
+.t17-theme-btn.active {
+  background: linear-gradient(135deg, var(--t17-accent), color-mix(in srgb, var(--t17-accent) 72%, var(--t17-accent-2))) !important;
+  color: #ffffff !important;
+  box-shadow: 0 3px 10px var(--t17-accent-glow) !important;
+}
+
+/* ==================== AJUSTES LIGHT MODE PARA LEGIBILIDAD ==================== */
+:root[data-titan-theme="light"] .sidebar,
+:root[data-titan-theme="light"] aside,
+:root[data-titan-theme="light"] table tbody tr {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04) !important;
+}
+:root[data-titan-theme="light"] pre,
+:root[data-titan-theme="light"] code,
+:root[data-titan-theme="light"] .prebox {
+  background: #0f172a !important;
+  color: #e2e8f0 !important;
+}
+
+/* ==================== BOTON LIMPIAR RADAR (PREPARADO PARA R3) ==================== */
+.t17-btn-clean {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  color: #fecdd3 !important;
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.22), rgba(225, 29, 72, 0.14)) !important;
+  border: 1px solid rgba(244, 63, 94, 0.45) !important;
+  border-radius: 10px !important;
+  cursor: pointer;
+}
+.t17-btn-clean:hover {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.36), rgba(225, 29, 72, 0.26)) !important;
+  box-shadow: 0 4px 16px rgba(244, 63, 94, 0.28) !important;
+}
+:root[data-titan-theme="light"] .t17-btn-clean {
+  color: #be123c !important;
+  background: rgba(244, 63, 94, 0.10) !important;
+}
