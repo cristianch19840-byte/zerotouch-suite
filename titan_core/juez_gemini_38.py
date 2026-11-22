@@ -59,22 +59,25 @@ def _extraer_json(texto: str) -> dict[str, Any] | None:
     if not texto:
         return None
     s = texto.strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.IGNORECASE | re.DOTALL).strip()
+    if "```" in s:
+        s = re.sub(r"```(?:json)?\s*|```", "", s, flags=re.IGNORECASE).strip()
     try:
         d = json.loads(s)
-        return d if isinstance(d, dict) else None
+        if isinstance(d, dict):
+            return d
     except Exception:
-        m = re.search(r"\{.*\}", s, flags=re.DOTALL)
-        if m:
-            try:
-                d = json.loads(m.group(0))
-                return d if isinstance(d, dict) else None
-            except Exception:
-                return None
+        pass
+    dec = json.JSONDecoder()
+    for pos in [m.start() for m in re.finditer(r"\{", s)]:
+        try:
+            obj, _ = dec.raw_decode(s[pos:])
+            if isinstance(obj, dict) and ("resumen_es" in obj or "suficiente_gemini_38_high" in obj or "veredicto" in obj):
+                return obj
+        except Exception:
+            continue
     return None
 
-def _llamar_gemini_json(prompt: str, timeout: int = 20) -> tuple[dict[str, Any] | None, str]:
+def _llamar_gemini_json(prompt: str, timeout: int = 30) -> tuple[dict[str, Any] | None, str]:
     try:
         import core_ia
         core_ia.cargar_env()
@@ -82,31 +85,38 @@ def _llamar_gemini_json(prompt: str, timeout: int = 20) -> tuple[dict[str, Any] 
     except Exception:
         modelos = []
     if not modelos:
-        modelos = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"]
+        modelos = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-flash-latest"]
     api_key = (os.environ.get("GEMINI_API_KEY_FREE") or os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
         return None, ""
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.15, "responseMimeType": "application/json"},
-    }
     for modelo in modelos:
         url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){modelo}:generateContent?key={api_key}"
-        try:
-            r = requests.post(url, json=payload, timeout=timeout)
-            if r.status_code != 200:
-                continue
-            data = r.json()
-            cands = data.get("candidates") or []
-            if not cands:
-                continue
-            parts = ((cands[0].get("content") or {}).get("parts") or [])
-            raw_txt = "".join(str(p.get("text") or "") for p in parts)
-            parsed = _extraer_json(raw_txt)
-            if parsed:
-                return parsed, f"gemini:{modelo}"
-        except Exception:
-            continue
+        for usar_mime in (True, False):
+            gen_cfg: dict[str, Any] = {"temperature": 0.15}
+            if usar_mime:
+                gen_cfg["responseMimeType"] = "application/json"
+            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
+            try:
+                r = requests.post(url, json=payload, timeout=timeout)
+                if r.status_code == 400 and usar_mime:
+                    continue
+                if r.status_code != 200:
+                    break
+                cands = r.json().get("candidates") or []
+                if not cands:
+                    break
+                parts = ((cands[0].get("content") or {}).get("parts") or [])
+                visibles = [str(pt.get("text") or "") for pt in parts if not pt.get("thought") and pt.get("text")]
+                for chunk in reversed(visibles):
+                    parsed = _extraer_json(chunk)
+                    if parsed:
+                        return parsed, f"gemini:{modelo}"
+                parsed = _extraer_json("\n".join(visibles))
+                if parsed:
+                    return parsed, f"gemini:{modelo}"
+                break
+            except Exception:
+                break
     return None, ""
 
 def _llamar_ollama_json(prompt: str, timeout: int = 25) -> tuple[dict[str, Any] | None, str]:
@@ -345,3 +355,55 @@ def verificar_todas_en_db(
         "desde_cache": cacheadas,
         "resultados": resultados,
     }
+
+
+def registrar_rutas_juez_ia(router: Any, svc: Any = None) -> None:
+    from titan_core.radar_cleaner import _leer_json_req, _montar_ruta
+
+    def _dbp() -> str | None:
+        return getattr(getattr(svc, "db", None), "db_path", None) if svc is not None else None
+
+    def _mapa(req: Any) -> dict[str, Any]:
+        mp = obtener_mapa_juez(db_path=_dbp())
+        return {"ok": True, "total": len(mp), "mapa": {str(k): v for k, v in mp.items()}}
+
+    def _verificar_todas(req: Any) -> dict[str, Any]:
+        body = _leer_json_req(req)
+        lim = int(body.get("limite") or 50) if str(body.get("limite", 50)).isdigit() else 50
+        return verificar_todas_en_db(
+            db_path=_dbp(),
+            forzar=bool(body.get("forzar", False)),
+            usar_ia=bool(body.get("usar_ia", True)),
+            marcar_no_aptas=bool(body.get("marcar_no_aptas", False)),
+            limite=lim,
+        )
+
+    def _verificar_una(req: Any) -> dict[str, Any]:
+        body = _leer_json_req(req)
+        lid = body.get("lead_id")
+        titulo = str(body.get("titulo") or "")
+        cuerpo = str(body.get("cuerpo") or "")
+        plataforma = str(body.get("plataforma") or "")
+        presupuesto = str(body.get("presupuesto") or "")
+        dbp = _dbp()
+        if lid is not None and not titulo:
+            conn = sqlite3.connect(dbp or _db_path_default(), timeout=10)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute("SELECT titulo, notas, plataforma, presupuesto FROM leads WHERE id = ?", (int(lid),)).fetchone()
+                if not row:
+                    return {"ok": False, "error": f"Lead {lid} no encontrado"}
+                titulo, cuerpo, plataforma, presupuesto = str(row["titulo"] or ""), str(row["notas"] or ""), str(row["plataforma"] or ""), str(row["presupuesto"] or "")
+            finally:
+                conn.close()
+        res = evaluar_y_traducir_oferta(
+            titulo=titulo, cuerpo=cuerpo, plataforma=plataforma, presupuesto=presupuesto,
+            lead_id=int(lid) if lid is not None else None, db_path=dbp,
+            usar_ia=bool(body.get("usar_ia", True)), forzar=bool(body.get("forzar", False)),
+        )
+        return {"ok": True, "resultado": res}
+
+    _montar_ruta(router, "GET", "/api/v2/juez-ia/mapa", _mapa, "juez_ia_v2_mapa")
+    _montar_ruta(router, "POST", "/api/v2/juez-ia/verificar-todas", _verificar_todas, "juez_ia_v2_todas")
+    _montar_ruta(router, "POST", "/api/v2/juez-ia/verificar-una", _verificar_una, "juez_ia_v2_una")
+

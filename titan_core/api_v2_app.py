@@ -271,6 +271,8 @@ def crear_app_titan_v16(
     registrar_rutas_limpieza(srv.router, svc)
     from titan_core.filtro_perfil_gemini import registrar_rutas_perfil_ia
     registrar_rutas_perfil_ia(srv.router, svc)
+    from titan_core.juez_gemini_38 import registrar_rutas_juez_ia
+    registrar_rutas_juez_ia(srv.router, svc)
     return srv, svc
 
 

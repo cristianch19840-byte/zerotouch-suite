@@ -347,6 +347,20 @@ def _enviar_y_guardar_oferta(item: dict, datos: dict, cfg: dict, conn=None, modo
     if fila:
         botones.append(fila)
 
+    _juez_res = None
+    try:
+        from titan_core.filtro_perfil_gemini import cargar_perfil_config as _cargar_p_cfg
+        if _cargar_p_cfg().get('activo', True):
+            from titan_core.juez_gemini_38 import evaluar_y_traducir_oferta as _juez_eval
+            _juez_res = _juez_eval(titulo=str(titulo or ''), cuerpo=str(resumen or ''), plataforma=str(plataforma or fuente or ''), presupuesto=str(presupuesto or ''), usar_ia=True)
+            if not _juez_res.get('suficiente_gemini_38_high', False):
+                log_evento(f"[Juez Gemini 3.8] Rechazada: {str(titulo)[:42]} | {_juez_res.get('motivo_es', '')[:65]}")
+                return False
+            if _juez_res.get('resumen_es'):
+                msg_html = f"{msg_html}\n\n<b>Que pide (ES):</b> {_juez_res['resumen_es']}\n<b>Gemini 3.8 High:</b> APTA ({_juez_res.get('nivel_dificultad', 'media')}) - {_juez_res.get('motivo_es', '')}"
+                msg_plano = f"{msg_plano}\n\n[ES] {_juez_res['resumen_es']}\n[Gemini 3.8 High] APTA: {_juez_res.get('motivo_es', '')}"
+    except Exception as _ej:
+        log_evento(f'[Juez Gemini 3.8] Aviso: {_ej}')
     enviado = publicar_telegram(msg_html, msg_plano, botones=botones)
     log_evento(f"Lead {score}/10 ({fuente} | ${pres_num:.0f}): {titulo[:52]}")
     if modo_sonido and score >= 7:
@@ -363,6 +377,13 @@ def _enviar_y_guardar_oferta(item: dict, datos: dict, cfg: dict, conn=None, modo
                 """,
                 (fuente, plataforma, tipo_trabajo, autor, titulo, categoria, presupuesto, pres_num, score, comp_txt, confianza, prio_tag, link),
             )
+            if _juez_res and _juez_res.get('hash_oferta'):
+                try:
+                    _lid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    if _lid:
+                        conn.execute('UPDATE juez_ia_leads SET lead_id = ? WHERE hash_oferta = ?', (int(_lid), _juez_res['hash_oferta']))
+                except Exception:
+                    pass
             conn.commit()
     return enviado
 
