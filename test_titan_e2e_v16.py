@@ -216,7 +216,7 @@ def ejecutar_suite_e2e() -> dict[str, Any]:
             sse_lines: list[str] = []
             def _read_sse() -> None:
                 with requests.get(f"{api}/events/stream?topics=crm.*,finanzas.*&max_events=2", stream=True, timeout=6) as rs:
-                    for ln in rs.iter_lines(decode_unicode=True):
+                    for ln in rs.iter_lines(chunk_size=1, decode_unicode=True):
                         if ln:
                             sse_lines.append(ln)
 

@@ -161,6 +161,7 @@ class SSEStreamManager:
         max_eventos = req.qint("max_events", 0)  # Util para clientes puntuales o pruebas automatizadas
 
         # Enviar cabeceras SSE
+        handler.close_connection = True
         handler.send_response(200)
         handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
         handler.send_header("Cache-Control", "no-cache, no-transform")
