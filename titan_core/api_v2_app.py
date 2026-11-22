@@ -340,7 +340,10 @@ def despachar_en_handler_legacy(http_handler: Any, method: str, raw_body: bytes 
             http_handler.send_header("Cache-Control", "no-store" if no_cache else "no-cache")
             http_handler.end_headers()
             if met != "HEAD":
-                http_handler.wfile.write(data)
+                try:
+                    http_handler.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
             return True
 
     # B) API REST v2 + SSE Live
@@ -370,5 +373,8 @@ def despachar_en_handler_legacy(http_handler: Any, method: str, raw_body: bytes 
             http_handler.send_header(k, v)
     http_handler.end_headers()
     if met != "HEAD" and resp.body:
-        http_handler.wfile.write(resp.body)
+        try:
+            http_handler.wfile.write(resp.body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
     return True

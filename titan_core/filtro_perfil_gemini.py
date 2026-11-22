@@ -91,7 +91,8 @@ def guardar_perfil_config(cambios: dict[str, Any]) -> dict[str, Any]:
     actual = dict(DEFAULT_PERFIL_CONFIG)
     if isinstance(raw.get("perfil_ia_usuario"), dict): actual.update(raw["perfil_ia_usuario"])
     for k, v in cambios.items():
-        if k in DEFAULT_PERFIL_CONFIG: actual[k] = v
+        if k in DEFAULT_PERFIL_CONFIG:
+            actual[k] = max(0, int(v)) if isinstance(DEFAULT_PERFIL_CONFIG[k], int) and not isinstance(DEFAULT_PERFIL_CONFIG[k], bool) and str(v).isdigit() else (bool(v) if isinstance(DEFAULT_PERFIL_CONFIG[k], bool) else v)
     raw["perfil_ia_usuario"] = actual
     with open(path, "w", encoding="utf-8", newline="\n") as f: json.dump(raw, f, indent=2, ensure_ascii=False)
     _CFG_CACHE = (0.0, actual)

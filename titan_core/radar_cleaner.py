@@ -329,7 +329,7 @@ def registrar_rutas_limpieza(router: Any, svc: Any) -> RadarCleanerService:
         body = _leer_json_req(req)
         return cleaner.limpiar(
             modo=str(body.get("modo") or "nuevos"),
-            score_max=int(body.get("score_max", 6)),
+            score_max=int(body.get("score_max") or 6) if str(body.get("score_max", 6)).lstrip("-").isdigit() else 6,
             estados=body.get("estados") if isinstance(body.get("estados"), list) else None,
             limpiar_vistos=bool(body.get("limpiar_vistos", False)),
             backup_previo=bool(body.get("backup_previo", True)),

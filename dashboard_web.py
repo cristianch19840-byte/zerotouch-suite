@@ -1714,10 +1714,11 @@ def main() -> None:
         webbrowser.open(url)
         return
     server = ThreadingHTTPServer(("127.0.0.1", puerto), Handler)
+    server.daemon_threads = True
     log_evento("Servidor Web OMNI-GRID v13.0 iniciado en " + url)
     print(f"\n{C.BOLD}{C.GREEN}=== ZEROTOUCH OMNI-GRID v13.0 WEB OS: {url} ==={C.RESET}")
     print(f"{C.DIM}Presiona Ctrl+C aqui cuando quieras apagar el servidor.{C.RESET}\n")
-    webbrowser.open(url)
+    import threading as _th_wb; _th_wb.Timer(0.5, webbrowser.open, args=(url,)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
