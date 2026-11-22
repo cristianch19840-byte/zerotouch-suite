@@ -90,6 +90,15 @@ class TitanEventBus:
         origen: str = "sistema",
         nivel: str = "info",
     ) -> EventoSistema:
+        if str(topico) == "aegis.drift.detectado":
+            import time as _t_thr
+            _tc = getattr(self, "_throttle_cache", None)
+            if _tc is None:
+                _tc = {}
+                self._throttle_cache = _tc
+            _prev = _tc.get("aegis.drift.detectado")
+            if _prev is not None and (_t_thr.time() - _prev[0]) < 300.0:
+                return _prev[1]
         topico_clean = str(topico or "sistema.log").strip().lower()
         with self._lock:
             self._seq += 1
@@ -134,7 +143,11 @@ class TitanEventBus:
             else:
                 self._invocar_callback_seguro(sub, evt)
 
-        return evt
+        _ev_ret = evt
+        if str(topico) == "aegis.drift.detectado":
+            import time as _t_thr
+            self._throttle_cache["aegis.drift.detectado"] = (_t_thr.time(), _ev_ret)
+        return _ev_ret
 
     def _invocar_callback_seguro(self, sub: _SuscriptorCallback, evt: EventoSistema) -> None:
         try:

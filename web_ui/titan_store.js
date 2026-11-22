@@ -282,7 +282,7 @@
       } else if (
         top.startsWith('crm.') ||
         top.startsWith('finanzas.') ||
-        top.startsWith('aegis.') ||
+        top === 'aegis.calibracion.aplicada' ||
         top.startsWith('factory.') ||
         top.startsWith('sandbox.')
       ) {
