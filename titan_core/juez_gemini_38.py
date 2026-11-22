@@ -82,60 +82,69 @@ def _llamar_gemini_json(prompt: str, timeout: int = 30) -> tuple[dict[str, Any] 
     try:
         import core_ia
         core_ia.cargar_env()
-        modelos = list(getattr(core_ia, "MODELOS_PREFERIDOS", []))
+        base_mods = list(getattr(core_ia, "MODELOS_PREFERIDOS", []))
     except Exception:
-        modelos = []
-    if not modelos:
-        modelos = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-flash-latest"]
+        base_mods = []
+    extras = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-flash-latest"]
+    modelos: list[str] = []
+    for m in base_mods + extras:
+        if m and m not in modelos:
+            modelos.append(m)
     api_key = (os.environ.get("GEMINI_API_KEY_FREE") or os.environ.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
         return None, ""
     for modelo in modelos:
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){modelo}:generateContent?key={api_key}"
-        for usar_mime in (True, False):
-            gen_cfg: dict[str, Any] = {"temperature": 0.15}
-            if usar_mime:
-                gen_cfg["responseMimeType"] = "application/json"
-            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
-            try:
-                r = requests.post(url, json=payload, timeout=timeout)
-                if r.status_code == 400 and usar_mime:
-                    continue
-                if r.status_code == 429:
-                    time.sleep(1.5)
-                    break
-                if r.status_code != 200:
-                    break
-                cands = r.json().get("candidates") or []
-                if not cands:
-                    break
-                parts = ((cands[0].get("content") or {}).get("parts") or [])
-                visibles = [str(pt.get("text") or "") for pt in parts if not pt.get("thought") and pt.get("text")]
-                for chunk in reversed(visibles):
-                    parsed = _extraer_json(chunk)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        for intento in range(2):
+            reintentar = False
+            for usar_mime in (True, False):
+                gen_cfg: dict[str, Any] = {"temperature": 0.15}
+                if usar_mime:
+                    gen_cfg["responseMimeType"] = "application/json"
+                payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
+                try:
+                    r = requests.post(url, json=payload, timeout=timeout)
+                    if r.status_code == 400 and usar_mime:
+                        continue
+                    if r.status_code in (429, 503):
+                        reintentar = True
+                        break
+                    if r.status_code != 200:
+                        break
+                    cands = r.json().get("candidates") or []
+                    if not cands:
+                        break
+                    parts = ((cands[0].get("content") or {}).get("parts") or [])
+                    visibles = [str(pt.get("text") or "") for pt in parts if not pt.get("thought") and pt.get("text")]
+                    for chunk in reversed(visibles):
+                        parsed = _extraer_json(chunk)
+                        if parsed:
+                            return parsed, f"gemini:{modelo}"
+                    parsed = _extraer_json("\n".join(visibles))
                     if parsed:
                         return parsed, f"gemini:{modelo}"
-                parsed = _extraer_json("\n".join(visibles))
-                if parsed:
-                    return parsed, f"gemini:{modelo}"
-                break
-            except Exception:
-                break
+                    break
+                except Exception:
+                    break
+            if reintentar and intento == 0:
+                time.sleep(2.0)
+                continue
+            break
     return None, ""
 
-def _llamar_ollama_json(prompt: str, timeout: int = 25) -> tuple[dict[str, Any] | None, str]:
+def _llamar_ollama_json(prompt: str, timeout: int = 45) -> tuple[dict[str, Any] | None, str]:
     try:
         import core_ia
         cfg = core_ia.cargar_config()
     except Exception:
         cfg = {}
-    url = str(cfg.get("ollama_url") or "[http://127.0.0.1:11434](http://127.0.0.1:11434)").rstrip("/")
+    url = str(cfg.get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
     modelo = str(cfg.get("ollama_modelo") or "qwen3:8b")
     try:
         r = requests.post(
             f"{url}/api/generate",
             json={"model": modelo, "prompt": prompt, "stream": False, "format": "json", "options": {"temperature": 0.15}},
-            timeout=timeout,
+            timeout=(2, timeout),
         )
         if r.status_code == 200:
             parsed = _extraer_json(str(r.json().get("response") or ""))

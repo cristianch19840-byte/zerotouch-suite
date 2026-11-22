@@ -741,7 +741,7 @@ if __name__ == "__main__":
             "plataforma": "Reddit",
             "tipo_trabajo": "freelance",
             "autor": "test_client",
-            "titulo": "Build Python Playwright scraper for Shopify stores ($300 USD)",
+            "titulo": "Simple Python script to merge CSV files into Excel ($300 USD)",
             "texto": "Looking for a clean Python script to extract product titles, variants, and prices from 5 Shopify stores into CSV.",
             "link": "https://www.freelancer.com/",
             "comp_txt": "🎯 SANGRE FRESCA (3m | 2 bids)",

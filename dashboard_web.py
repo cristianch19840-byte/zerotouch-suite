@@ -1529,7 +1529,7 @@ class Handler(BaseHTTPRequestHandler):
                     "plataforma": "Reddit",
                     "tipo_trabajo": "freelance",
                     "autor": "test_client",
-                    "titulo": "Build Python Playwright scraper for Shopify stores ($250 USD)",
+                    "titulo": "Simple Python script to merge CSV files into Excel ($60 USD)",
                     "texto": "Need a Python script to scrape product prices into CSV.",
                     "link": "https://www.freelancer.com/",
                     "comp_txt": "🎯 SANGRE FRESCA (1m | 1 bid)",
