@@ -510,8 +510,8 @@ def escanear_reddit(cfg: dict) -> tuple[list[dict], list[dict]]:
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futuros = [pool.submit(_obtener_lote, nom, subs, cfg) for nom, subs in MULTIREDDIT_BATCHES]
-        futuros.append(pool.submit(_buscar_global, q_g1, "hiring python", "Reddit-Global1", cfg))
-        futuros.append(pool.submit(_buscar_global, q_g2, "hiring automation", "Reddit-Global2", cfg))
+        # Desactivado por redundancia con Reddit-Core (evita rate-limit): futuros.append(pool.submit(_buscar_global, q_g1, "hiring python", "Reddit-Global1", cfg))
+        # Desactivado por redundancia con Reddit-Core (evita rate-limit): futuros.append(pool.submit(_buscar_global, q_g2, "hiring automation", "Reddit-Global2", cfg))
         for fut in as_completed(futuros):
             try:
                 its, mt = fut.result()
